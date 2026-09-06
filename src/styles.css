@@ -1,0 +1,881 @@
+/* ============================================================================
+   Planner - Telegram white and blue, comfort minimal.
+
+   White grouped cards on a faintly cool ground, one Telegram-blue accent, and
+   hairline borders doing all the separating: no gradients, no shadows. The
+   "comfort" half is spacing, not decoration - roomier rows, larger tap targets
+   and softer corners than a dense productivity UI would use.
+   ============================================================================ */
+
+:root {
+  /* #3390ec is the button/link blue Telegram Web uses in its light theme, so
+     the app reads as part of the client rather than a guest inside it. */
+  --accent: #3390ec;
+  --accent-press: #2b7ed4;
+  --accent-weak: #eaf3fd;
+
+  --bg: #f7f9fb;
+  --surface: #ffffff;
+  --surface-sunk: #f0f4f8;
+  --border: #e8edf2;
+  --border-strong: #d7e0e8;
+  --text: #0f1419;
+  --muted: #707a85;
+  --faint: #a1acb8;
+  --danger: #e0393e;
+  --danger-weak: #fdf1f1;
+  --warn: #c77700;
+
+  --radius: 13px;
+  --radius-sm: 9px;
+  --tap: 48px; /* comfortable touch target */
+
+  /* Overwritten at runtime by telegram.ts. The fallbacks are what a plain
+     browser tab gets. */
+  --inset-top: 0px;
+  --inset-bottom: 0px;
+  --inset-left: 0px;
+  --inset-right: 0px;
+
+  color-scheme: light; /* stop mobile browsers auto-inverting form controls */
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial,
+    sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+input,
+textarea,
+button,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+/* ------------------------------------------------------------------ shell -- */
+
+/* --app-height is Telegram's stable viewport height; 100dvh is the browser
+   fallback. Fixed height + an inner scroll area keeps the bottom nav pinned
+   without position:fixed fighting the on-screen keyboard. */
+.app {
+  height: 100dvh;
+  height: var(--app-height, 100dvh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-left: var(--inset-left);
+  padding-right: var(--inset-right);
+}
+
+.topbar {
+  flex: none;
+  padding: calc(var(--inset-top) + 16px) 18px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar .sub {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--muted);
+  letter-spacing: 0;
+  margin-top: 2px;
+}
+
+.screen {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 18px 16px;
+}
+
+/* Clears the bottom nav so the last row is never trapped under it. */
+.screen.has-nav {
+  padding-bottom: calc(76px + var(--inset-bottom) + 18px);
+}
+
+/* ------------------------------------------------------------- bottom nav -- */
+
+.nav {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding-bottom: var(--inset-bottom);
+}
+
+.nav button {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 11px 4px 13px;
+  min-height: var(--tap);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--faint);
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+
+.nav button .label {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.nav button[aria-current="page"] {
+  color: var(--accent);
+}
+
+.nav button:active {
+  background: var(--surface-sunk);
+}
+
+/* --------------------------------------------------------------- sections -- */
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0 11px;
+}
+
+.section-head h2 {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.count {
+  font-size: 0.75rem;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ lists -- */
+
+/* One bordered container, hairline dividers between rows - no per-card
+   borders, which is what keeps the list flat rather than boxy. */
+.list {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  padding: 16px;
+  min-height: var(--tap);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.row:active {
+  background: var(--surface-sunk);
+}
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-title {
+  font-size: 1rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-sub {
+  font-size: 0.875rem;
+  color: var(--muted);
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-meta {
+  flex: none;
+  font-size: 0.8125rem;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.chev {
+  flex: none;
+  color: var(--faint);
+}
+
+/* ------------------------------------------------------------------ tasks -- */
+
+.task.done .row-title {
+  color: var(--faint);
+  text-decoration: line-through;
+}
+
+.task.done .row-sub {
+  color: var(--faint);
+}
+
+.check {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.check[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.thumb {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  border: 1px solid var(--border);
+  background: var(--surface-sunk);
+}
+
+/* Deadline pills. Overdue and today are the only two that earn colour. */
+.due {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.due.overdue {
+  color: var(--danger);
+  font-weight: 500;
+}
+
+.due.today {
+  color: var(--warn);
+  font-weight: 500;
+}
+
+/* --------------------------------------------------------------- controls -- */
+
+.btn {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 0 16px;
+  min-height: var(--tap);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.btn-primary:active {
+  background: var(--accent-press);
+}
+
+.btn-primary:disabled {
+  background: var(--border-strong);
+  color: #fff;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.btn-secondary:active {
+  background: var(--surface-sunk);
+}
+
+.btn-ghost {
+  background: none;
+  color: var(--accent);
+  padding: 0 8px;
+  min-height: 36px;
+}
+
+.btn-danger {
+  background: none;
+  color: var(--danger);
+  border-color: var(--border);
+}
+
+.btn-danger:active {
+  background: var(--danger-weak);
+}
+
+.btn-block {
+  width: 100%;
+}
+
+.icon-btn {
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: var(--text);
+  flex: none;
+  padding: 0;
+}
+
+.icon-btn:active {
+  background: var(--surface-sunk);
+}
+
+/* ------------------------------------------------------------------ forms -- */
+
+.field {
+  display: block;
+  margin-bottom: 14px;
+}
+
+.field > .label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.field .limit {
+  font-size: 0.75rem;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.input,
+.textarea {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 11px 12px;
+  min-height: var(--tap);
+  font-size: 1rem; /* 16px min, or iOS zooms the page on focus */
+  outline: none;
+  transition: border-color 0.12s ease;
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 76px;
+  line-height: 1.45;
+}
+
+.input:focus,
+.textarea:focus {
+  border-color: var(--accent);
+}
+
+.input::placeholder,
+.textarea::placeholder {
+  color: var(--faint);
+}
+
+.error {
+  background: var(--danger-weak);
+  border: 1px solid #f6d5d6;
+  color: var(--danger);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 0.875rem;
+  margin-bottom: 14px;
+}
+
+.hint {
+  font-size: 0.8125rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------------------ image picker -- */
+
+.picker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.picker-preview {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  border: 1px solid var(--border);
+}
+
+.picker input[type="file"] {
+  display: none;
+}
+
+/* ------------------------------------------------------------------- auth -- */
+
+.auth {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 24px 20px calc(24px + var(--inset-bottom));
+  max-width: 420px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.auth-brand {
+  margin-bottom: 28px;
+}
+
+.auth-brand .mark {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 1.125rem;
+  margin-bottom: 14px;
+}
+
+.auth-brand h1 {
+  margin: 0 0 4px;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.auth-brand p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9375rem;
+}
+
+.auth-switch {
+  margin-top: 18px;
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.auth-switch button {
+  background: none;
+  border: 0;
+  color: var(--accent);
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px;
+}
+
+/* ------------------------------------------------------------ bottom sheet -- */
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 20, 25, 0.3);
+  display: flex;
+  align-items: flex-end;
+  z-index: 50;
+  animation: fade 0.15s ease;
+}
+
+.sheet {
+  background: var(--surface);
+  width: 100%;
+  border-radius: 16px 16px 0 0;
+  border-top: 1px solid var(--border);
+  padding: 8px 16px calc(16px + var(--inset-bottom));
+  max-height: 88%;
+  overflow-y: auto;
+  animation: rise 0.18s ease;
+}
+
+.sheet-grip {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-strong);
+  margin: 6px auto 14px;
+}
+
+.sheet h2 {
+  margin: 0 0 16px;
+  font-size: 1.0625rem;
+  font-weight: 600;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes rise {
+  from {
+    transform: translateY(12px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet-backdrop,
+  .sheet {
+    animation: none;
+  }
+}
+
+/* --------------------------------------------------------------- calendar -- */
+
+.cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  gap: 8px;
+}
+
+.cal-head .month {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.cal-dow {
+  padding: 8px 0;
+  text-align: center;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+}
+
+.cal-day {
+  aspect-ratio: 1;
+  border: 0;
+  background: none;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  padding: 0;
+}
+
+.cal-day:nth-child(7n) {
+  border-right: 0;
+}
+
+.cal-day.pad {
+  color: var(--faint);
+  opacity: 0.45;
+  cursor: default;
+}
+
+.cal-day.today .num {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+}
+
+.cal-day[aria-pressed="true"] {
+  background: var(--accent-weak);
+}
+
+.cal-day .num {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+}
+
+.dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.dot.overdue {
+  background: var(--danger);
+}
+
+/* ------------------------------------------------------------------- team -- */
+
+.avatar {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--accent-weak);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.tag {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: var(--surface-sunk);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.tag.owner {
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+
+.tag.invited {
+  background: #fdf6e8;
+  color: var(--warn);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 7px 13px;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  color: var(--text);
+  min-height: 36px;
+}
+
+.chip[aria-pressed="true"] {
+  background: var(--accent-weak);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* ------------------------------------------------------------------ misc -- */
+
+.empty {
+  text-align: center;
+  padding: 44px 24px;
+  color: var(--muted);
+}
+
+.empty .title {
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 6px;
+  font-size: 0.9375rem;
+}
+
+.empty p {
+  margin: 0 0 18px;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.detail-image {
+  width: 100%;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  margin-bottom: 16px;
+  display: block;
+}
+
+.comment {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.comment:last-child {
+  border-bottom: 0;
+}
+
+.comment-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.comment-author {
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.comment-time {
+  font-size: 0.75rem;
+  color: var(--faint);
+}
+
+.comment-body {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.comment-image {
+  margin-top: 8px;
+  max-width: 180px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  display: block;
+}
+
+.composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  margin-top: 12px;
+}
+
+.composer .input {
+  flex: 1;
+}
+
+.stack > * + * {
+  margin-top: 16px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* --------------------------------------------------------------- powered by -- */
+
+.powered {
+  margin: 26px 0 4px;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--faint);
+}
+
+.powered a {
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px solid var(--border-strong);
+  padding-bottom: 1px;
+}
+
+.powered a:active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}

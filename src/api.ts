@@ -1,0 +1,483 @@
+/* ============================================================================
+   Data layer.
+
+   Every function here is async and named after the HTTP endpoint it stands in
+   for (the endpoint is in the comment above each one). Today they read and
+   write localStorage; when the FastAPI routes exist, only the bodies change -
+   the signatures, argument shapes and return shapes stay identical, so no
+   screen has to be touched.
+
+   The backend is deliberately not involved yet.
+   ============================================================================ */
+
+import type { Board, Comment, ID, Member, Session, Task, User } from "./types";
+
+const DB_KEY = "planner.db.v1";
+const SESSION_KEY = "planner.session.v1";
+
+interface StoredUser extends User {
+  password_hash: string;
+}
+
+interface Db {
+  users: StoredUser[];
+  boards: Board[];
+  tasks: Task[];
+  comments: Comment[];
+  members: Member[];
+}
+
+const EMPTY_DB: Db = {
+  users: [],
+  boards: [],
+  tasks: [],
+  comments: [],
+  members: [],
+};
+
+/** Mirrors an HTTP failure so screens can branch on `status` exactly as they
+ *  will once these calls are real fetches. */
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+/* ---------------------------------------------------------------- storage -- */
+
+function readDb(): Db {
+  try {
+    const raw = localStorage.getItem(DB_KEY);
+    if (!raw) return structuredClone(EMPTY_DB);
+    return { ...structuredClone(EMPTY_DB), ...(JSON.parse(raw) as Partial<Db>) };
+  } catch {
+    // Corrupt JSON, or storage blocked entirely (private mode). Start clean
+    // rather than leaving every screen throwing.
+    return structuredClone(EMPTY_DB);
+  }
+}
+
+function writeDb(db: Db): void {
+  try {
+    localStorage.setItem(DB_KEY, JSON.stringify(db));
+  } catch {
+    // The usual cause is the ~5 MB quota, and the usual reason for hitting it
+    // is attached images stored as data: URLs.
+    throw new ApiError(
+      507,
+      "Out of local storage. Remove some task images, or clear the app data in Settings.",
+    );
+  }
+}
+
+function uid(): ID {
+  return crypto.randomUUID();
+}
+
+function now(): string {
+  return new Date().toISOString();
+}
+
+/* --------------------------------------------------------------- password -- */
+
+/** Mock-only hashing, so a plaintext password never sits in localStorage.
+ *
+ *  This is NOT how the real thing should work: a browser-side SHA-256 has no
+ *  salt and no work factor. When the backend lands, the password goes over TLS
+ *  in the request body and argon2id runs server-side, and this function
+ *  disappears. */
+async function hashPassword(plain: string): Promise<string> {
+  if (globalThis.crypto?.subtle) {
+    const bytes = new TextEncoder().encode(plain);
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    return [...new Uint8Array(digest)]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+  // crypto.subtle needs a secure context. Serving the dev build over plain
+  // http:// to a phone on the LAN is the case that lands here.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < plain.length; i++) {
+    h ^= plain.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `insecure-dev:${h.toString(16)}`;
+}
+
+/* ---------------------------------------------------------------- session -- */
+
+function readSession(): Session | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    return raw ? (JSON.parse(raw) as Session) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSession(session: Session | null): void {
+  try {
+    if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    else localStorage.removeItem(SESSION_KEY);
+  } catch {
+    /* storage blocked - the session just will not survive a reload */
+  }
+}
+
+function requireUser(): User {
+  const session = readSession();
+  if (!session) throw new ApiError(401, "Not signed in");
+  return session.user;
+}
+
+function publicUser(u: StoredUser): User {
+  // Strip password_hash the way a UserRead pydantic schema will: by listing
+  // the fields that may leave, never by deleting the ones that may not.
+  return { id: u.id, email: u.email, created_at: u.created_at };
+}
+
+/* ------------------------------------------------------------------- auth -- */
+
+/** POST /auth/register */
+export async function register(email: string, password: string): Promise<Session> {
+  const clean = email.trim().toLowerCase();
+  if (!clean || !password) throw new ApiError(422, "Email and password required");
+  if (password.length < 8)
+    throw new ApiError(422, "Password must be at least 8 characters");
+
+  const db = readDb();
+  if (db.users.some((u) => u.email === clean))
+    throw new ApiError(409, "That email is already registered");
+
+  const user: StoredUser = {
+    id: uid(),
+    email: clean,
+    created_at: now(),
+    password_hash: await hashPassword(password),
+  };
+  db.users.push(user);
+
+  // The first account on a device owns the team.
+  db.members.push({
+    id: uid(),
+    email: clean,
+    role: "owner",
+    status: "active",
+    board_ids: [],
+    created_at: now(),
+  });
+
+  writeDb(db);
+  const session: Session = { user: publicUser(user), token: `mock.${user.id}` };
+  writeSession(session);
+  return session;
+}
+
+/** POST /auth/login */
+export async function login(email: string, password: string): Promise<Session> {
+  const clean = email.trim().toLowerCase();
+  const db = readDb();
+  const user = db.users.find((u) => u.email === clean);
+  const candidate = await hashPassword(password);
+
+  // Hash even when the email is unknown, so response time does not reveal
+  // which addresses have accounts. The real handler must do the same.
+  const ok = user ? user.password_hash === candidate : false;
+  if (!user || !ok) throw new ApiError(401, "Wrong email or password");
+
+  const session: Session = { user: publicUser(user), token: `mock.${user.id}` };
+  writeSession(session);
+  return session;
+}
+
+/** POST /auth/logout */
+export async function logout(): Promise<void> {
+  writeSession(null);
+}
+
+/** GET /auth/me - resolves null when signed out, so the shell can pick a
+ *  screen without catching. */
+export async function me(): Promise<User | null> {
+  return readSession()?.user ?? null;
+}
+
+/* ----------------------------------------------------------------- boards -- */
+
+/** GET /boards */
+export async function listBoards(): Promise<Board[]> {
+  const user = requireUser();
+  const db = readDb();
+  const invited = new Set(
+    db.members.filter((m) => m.email === user.email).flatMap((m) => m.board_ids),
+  );
+  return db.boards
+    .filter((b) => b.owner_id === user.id || invited.has(b.id))
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
+
+/** POST /boards */
+export async function createBoard(title: string): Promise<Board> {
+  const user = requireUser();
+  const clean = title.trim();
+  if (!clean) throw new ApiError(422, "Title required");
+  if (clean.length > 30) throw new ApiError(422, "Title is limited to 30 characters");
+
+  const db = readDb();
+  const board: Board = {
+    id: uid(),
+    title: clean,
+    owner_id: user.id,
+    created_at: now(),
+  };
+  db.boards.push(board);
+  writeDb(db);
+  return board;
+}
+
+/** PATCH /boards/{id} */
+export async function renameBoard(id: ID, title: string): Promise<Board> {
+  const clean = title.trim();
+  if (!clean) throw new ApiError(422, "Title required");
+  const db = readDb();
+  const board = db.boards.find((b) => b.id === id);
+  if (!board) throw new ApiError(404, "Board not found");
+  board.title = clean.slice(0, 30);
+  writeDb(db);
+  return board;
+}
+
+/** DELETE /boards/{id} - cascades the way ondelete="CASCADE" will. */
+export async function deleteBoard(id: ID): Promise<void> {
+  const db = readDb();
+  const taskIds = new Set(db.tasks.filter((t) => t.board_id === id).map((t) => t.id));
+  db.boards = db.boards.filter((b) => b.id !== id);
+  db.tasks = db.tasks.filter((t) => t.board_id !== id);
+  db.comments = db.comments.filter((c) => !taskIds.has(c.task_id));
+  db.members = db.members.map((m) => ({
+    ...m,
+    board_ids: m.board_ids.filter((b) => b !== id),
+  }));
+  writeDb(db);
+}
+
+/** GET /boards/{id} */
+export async function getBoard(id: ID): Promise<Board> {
+  const board = readDb().boards.find((b) => b.id === id);
+  if (!board) throw new ApiError(404, "Board not found");
+  return board;
+}
+
+/* ------------------------------------------------------------------ tasks -- */
+
+export interface TaskInput {
+  title: string;
+  description: string;
+  deadline: string | null;
+  image: string | null;
+}
+
+/** GET /boards/{board_id}/tasks */
+export async function listTasks(boardId: ID): Promise<Task[]> {
+  return readDb()
+    .tasks.filter((t) => t.board_id === boardId)
+    .sort((a, b) => {
+      if (a.done !== b.done) return a.done ? 1 : -1; // open work first
+      // Then soonest deadline; tasks with no deadline sink to the bottom.
+      const ad = a.deadline ?? "9999-12-31";
+      const bd = b.deadline ?? "9999-12-31";
+      return ad.localeCompare(bd) || a.created_at.localeCompare(b.created_at);
+    });
+}
+
+/** GET /tasks - every task the signed-in user can see, for the calendar. */
+export async function listAllTasks(): Promise<Task[]> {
+  const boards = await listBoards();
+  const visible = new Set(boards.map((b) => b.id));
+  return readDb().tasks.filter((t) => visible.has(t.board_id));
+}
+
+/** POST /boards/{board_id}/tasks */
+export async function createTask(boardId: ID, input: TaskInput): Promise<Task> {
+  requireUser();
+  const title = input.title.trim();
+  if (!title) throw new ApiError(422, "Title required");
+
+  const db = readDb();
+  if (!db.boards.some((b) => b.id === boardId))
+    throw new ApiError(404, "Board not found");
+
+  const task: Task = {
+    id: uid(),
+    board_id: boardId,
+    title: title.slice(0, 30),
+    description: input.description.trim().slice(0, 100),
+    deadline: input.deadline || null,
+    image: input.image,
+    done: false,
+    created_at: now(),
+  };
+  db.tasks.push(task);
+  writeDb(db);
+  return task;
+}
+
+/** PATCH /tasks/{id} */
+export async function updateTask(
+  id: ID,
+  patch: Partial<Omit<Task, "id" | "board_id" | "created_at">>,
+): Promise<Task> {
+  const db = readDb();
+  const task = db.tasks.find((t) => t.id === id);
+  if (!task) throw new ApiError(404, "Task not found");
+  Object.assign(task, patch);
+  task.title = task.title.slice(0, 30);
+  task.description = task.description.slice(0, 100);
+  writeDb(db);
+  return task;
+}
+
+/** DELETE /tasks/{id} */
+export async function deleteTask(id: ID): Promise<void> {
+  const db = readDb();
+  db.tasks = db.tasks.filter((t) => t.id !== id);
+  db.comments = db.comments.filter((c) => c.task_id !== id);
+  writeDb(db);
+}
+
+/** GET /tasks/{id} */
+export async function getTask(id: ID): Promise<Task> {
+  const task = readDb().tasks.find((t) => t.id === id);
+  if (!task) throw new ApiError(404, "Task not found");
+  return task;
+}
+
+/* --------------------------------------------------------------- comments -- */
+
+export interface CommentView extends Comment {
+  author_email: string;
+}
+
+/** GET /tasks/{task_id}/comments - joined with the author the way the `author`
+ *  relationship on the Comment model will be. */
+export async function listComments(taskId: ID): Promise<CommentView[]> {
+  const db = readDb();
+  const byId = new Map(db.users.map((u) => [u.id, u.email]));
+  return db.comments
+    .filter((c) => c.task_id === taskId)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    .map((c) => ({ ...c, author_email: byId.get(c.author_id) ?? "unknown" }));
+}
+
+/** POST /tasks/{task_id}/comments */
+export async function createComment(
+  taskId: ID,
+  content: string,
+  image: string | null = null,
+): Promise<Comment> {
+  const user = requireUser();
+  const clean = content.trim();
+  if (!clean && !image) throw new ApiError(422, "Write something first");
+
+  const db = readDb();
+  const comment: Comment = {
+    id: uid(),
+    task_id: taskId,
+    content: clean.slice(0, 100),
+    image,
+    author_id: user.id,
+    created_at: now(),
+  };
+  db.comments.push(comment);
+  writeDb(db);
+  return comment;
+}
+
+/** DELETE /comments/{id} */
+export async function deleteComment(id: ID): Promise<void> {
+  const db = readDb();
+  db.comments = db.comments.filter((c) => c.id !== id);
+  writeDb(db);
+}
+
+/* ------------------------------------------------------------------- team -- */
+
+/** GET /team */
+export async function listMembers(): Promise<Member[]> {
+  requireUser();
+  return readDb().members.sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
+
+/** POST /team/invites */
+export async function inviteMember(email: string, boardIds: ID[]): Promise<Member> {
+  const user = requireUser();
+  const clean = email.trim().toLowerCase();
+  if (!clean.includes("@")) throw new ApiError(422, "Enter a valid email");
+  if (clean === user.email) throw new ApiError(409, "That is your own account");
+
+  const db = readDb();
+  if (db.members.some((m) => m.email === clean))
+    throw new ApiError(409, "Already on the team");
+
+  const member: Member = {
+    id: uid(),
+    email: clean,
+    role: "member",
+    status: "invited",
+    board_ids: boardIds,
+    created_at: now(),
+  };
+  db.members.push(member);
+  writeDb(db);
+  return member;
+}
+
+/** PATCH /team/{id} */
+export async function setMemberBoards(id: ID, boardIds: ID[]): Promise<Member> {
+  const db = readDb();
+  const member = db.members.find((m) => m.id === id);
+  if (!member) throw new ApiError(404, "Member not found");
+  member.board_ids = boardIds;
+  writeDb(db);
+  return member;
+}
+
+/** DELETE /team/{id} */
+export async function removeMember(id: ID): Promise<void> {
+  const db = readDb();
+  const member = db.members.find((m) => m.id === id);
+  if (member?.role === "owner") throw new ApiError(403, "The owner cannot be removed");
+  db.members = db.members.filter((m) => m.id !== id);
+  writeDb(db);
+}
+
+/* ------------------------------------------------------------------ local -- */
+
+/** Wipes the mock database and the session. No endpoint equivalent - this only
+ *  exists while the data lives in the browser. */
+export async function resetLocalData(): Promise<void> {
+  try {
+    localStorage.removeItem(DB_KEY);
+    localStorage.removeItem(SESSION_KEY);
+  } catch {
+    /* nothing we can do if storage is blocked */
+  }
+}
+
+/** Rough footprint of the stored database, shown in Settings so the ~5 MB
+ *  quota is visible before it is hit. */
+export function storageUsage(): { bytes: number; label: string } {
+  let bytes = 0;
+  try {
+    bytes = (localStorage.getItem(DB_KEY) ?? "").length * 2; // UTF-16 code units
+  } catch {
+    /* ignore */
+  }
+  const label =
+    bytes > 1024 * 1024
+      ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
+      : `${Math.round(bytes / 1024)} KB`;
+  return { bytes, label };
+}
