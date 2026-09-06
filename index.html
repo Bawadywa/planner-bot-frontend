@@ -1,0 +1,3319 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Finance App</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="./config.js?v=30"></script>
+  <script src="./api.js?v=30"></script>
+  <script src="./chart.umd.min.js?v=30"></script>
+  <script src="./ui.js?v=30"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root{
+      /* ---- Light theme: white surfaces, orange primary, purple secondary ----
+         Everything below is driven by these vars (applyTheme() re-sets the same names
+         at runtime), so the palette is changed in exactly two places. */
+      --orange: #f97316;
+      --orange-dk: #ea580c;
+      --purple: #a855f7;
+      --purple-dk: #7c3aed;
+
+      --bg: #faf8fc;
+      --text: #1b1425;
+      --hint: #6b6478;
+      --button: #f97316;
+      --button_text: #ffffff;
+      --secondary_bg: #ffffff;
+      --field_bg: #ffffff;
+      --field_border: rgba(27,20,37,.14);
+      --field_focus: rgba(249,115,22,.20);
+      --card_bg: #ffffff;
+      --border: rgba(27,20,37,.10);
+      --hover: rgba(168,85,247,.07);
+      --radius: 0.875rem;
+      /* Signature gradient — orange → purple */
+      --grad: linear-gradient(135deg,#f97316 0%,#fb923c 30%,#a855f7 100%);
+      /* Semantic amount colours, tuned for a white background.
+         pos/neg = income/expense · recv = money we lent out · pay = debt we took on
+         tr = transfer between own accounts (neutral: no profit, no loss) */
+      --pos: #16a34a;
+      --neg: #dc2626;
+      --recv: #2563eb;
+      --pay: #d97706;
+      --tr: #6b6478;
+    }
+
+    *{ box-sizing:border-box; }
+    /* Honour the `hidden` attribute even on elements with an author `display` rule
+       (e.g. the flex pills below would otherwise stay visible while hidden). */
+    [hidden]{ display:none !important; }
+    /* Base root font-size: every dimension below is in rem, so this is the single knob the
+       large-screen media queries turn to scale the whole UI up (see end of stylesheet). */
+    html{ font-size:16px; }
+    html,body{ margin:0; }
+
+    /* Single-page app: full-height flex column; each view (New / Transactions /
+       Dashboard) scrolls inside its own area. */
+    body{
+      font-family:'Inter',system-ui,Arial,sans-serif;
+      background:var(--bg);
+      color:var(--text);
+      padding:0.875rem 1rem;
+      height:100vh; height:100dvh;   /* fallbacks; the real height comes from @supports below */
+      display:flex; flex-direction:column;
+      overflow:hidden;
+      -webkit-font-smoothing:antialiased;
+      text-rendering:optimizeLegibility;
+    }
+    /* ---------- Fullscreen safe areas ----------
+       In fullscreen the Mini App owns the whole screen: the status bar / notch and
+       Telegram's own floating controls (⋯ and ✕, top-right) now sit ON TOP of our page.
+       Telegram reports how much room they need via safeAreaInset + contentSafeAreaInset;
+       applyInsets() copies those into the --inset-* vars and we pad the page by them, so
+       the top bar lands below the native controls instead of underneath them. The
+       fallbacks apply when a client reports nothing (older desktop builds).
+       Only in fullscreen — in the normal launch mode Telegram's chrome is outside the
+       webview and no extra padding is wanted. box-sizing:border-box keeps the padding
+       inside the body's height, so the views still fit exactly one screen. */
+    body.is-fullscreen{
+      padding-top:calc(0.875rem + var(--inset-top, 3.5rem));
+      padding-bottom:calc(0.875rem + var(--inset-bottom, 0px));
+      padding-left:calc(1rem + var(--inset-left, 0px));
+      padding-right:calc(1rem + var(--inset-right, 0px));
+    }
+    /* The page must be as tall as Telegram's VISIBLE area, not the screen. 100dvh counts the
+       strip Telegram keeps for its own bottom bar, so the shell ran past the fold and body's
+       overflow:hidden clipped whatever sat at the bottom — the footer actions and the totals
+       row. --tg-viewport-stable-height is the client's reported height minus that bar, and it
+       ignores the keyboard so the shell doesn't jump while typing. Guarded by @supports: a
+       browser without dvh must never reach this rule, because an unsupported unit inside a
+       var() fallback drops the declaration and the height with it. */
+    @supports (height:1dvh){
+      body{ height:var(--tg-viewport-stable-height, 100dvh); }
+    }
+    body::before{
+      content:"";
+      position:fixed; inset:0; z-index:-1; pointer-events:none;
+      background:
+        radial-gradient(55% 40% at 0% 0%, rgba(249,115,22,.10), transparent 60%),
+        radial-gradient(50% 40% at 100% 100%, rgba(168,85,247,.12), transparent 60%);
+    }
+
+    h1,h2,h3{ font-family:'Manrope',system-ui,Arial,sans-serif; letter-spacing:-.01em; margin:0; }
+    .gradient{
+      background:var(--grad);
+      -webkit-background-clip:text; background-clip:text;
+      -webkit-text-fill-color:transparent; color:transparent;
+    }
+
+    /* ---------- Top bar ---------- */
+    .topbar{ flex:none; display:grid; grid-template-columns:1fr auto; align-items:center; gap:0.625rem; margin-bottom:0.875rem; }
+    .actions{ justify-self:end; display:flex; gap:0.5rem; }
+
+    /* ---------- Account switcher (top-left, where the wordmark used to be) ----------
+       The app-wide VIEW selector: the chosen account filters the Transactions list and the
+       Dashboard and shows its balance. It does not affect the New-transaction form. */
+    .acc-switch{ justify-self:start; position:relative; min-width:0; }
+    .acc-trigger{
+      display:inline-flex; align-items:center; gap:0.4375rem; max-width:min(58vw,15rem);
+      margin:0; padding:0.5rem 0.75rem;
+      background:var(--card_bg); border:0.0625rem solid var(--border); border-radius:62.4375rem;
+      color:var(--text); cursor:pointer;
+      font-family:'Manrope',system-ui,Arial,sans-serif; font-weight:800; font-size:0.9375rem; line-height:1;
+      box-shadow:0 0.0625rem 0.125rem rgba(27,20,37,.05);
+      transition:border-color .2s, box-shadow .2s;
+    }
+    .acc-trigger:hover{ border-color:var(--orange); }
+    .acc-switch.open .acc-trigger{ border-color:var(--orange); box-shadow:0 0 0 0.25rem var(--field_focus); }
+    .acc-trigger:active{ transform:translateY(0.0625rem); }
+    .acc-ico{ flex:none; width:1.125rem; height:1.125rem; color:var(--purple-dk); }
+    .acc-name{
+      min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+      background:var(--grad); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+    }
+    .acc-caret{ flex:none; width:1rem; height:1rem; color:var(--hint); transition:transform .2s ease; }
+    .acc-switch.open .acc-caret{ transform:rotate(180deg); color:var(--orange); }
+    .acc-menu{
+      position:absolute; z-index:140; top:calc(100% + 0.4375rem); left:0;
+      min-width:14rem; max-width:min(85vw,20rem); padding:0.375rem;
+      background:var(--secondary_bg); border:0.0625rem solid var(--border); border-radius:0.875rem;
+      box-shadow:0 1.125rem 3.125rem rgba(27,20,37,.18), 0 0.25rem 0.75rem rgba(27,20,37,.08);
+      max-height:min(70vh,24rem); overflow-y:auto; -webkit-overflow-scrolling:touch;
+    }
+    .acc-opt{
+      display:flex; align-items:center; gap:0.5rem; padding:0.5625rem 0.625rem;
+      border-radius:0.5625rem; cursor:pointer; transition:background-color .12s ease;
+    }
+    .acc-opt:hover{ background:var(--hover); }
+    .acc-opt.selected{ background:linear-gradient(135deg,rgba(249,115,22,.16),rgba(168,85,247,.16)); }
+    .acc-opt-txt{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+      font-size:0.9375rem; font-weight:600; }
+    .acc-opt-bal{ flex:none; font-size:0.8125rem; font-weight:700; color:var(--hint); font-variant-numeric:tabular-nums; }
+    .acc-opt.selected .acc-opt-bal{ color:var(--text); }
+    .acc-opt-bal.neg{ color:var(--neg); }
+    .acc-check{ width:1rem; height:1rem; flex:none; color:var(--orange); opacity:0; }
+    .acc-opt.selected .acc-check{ opacity:1; }
+    .acc-sep{ height:0.0625rem; background:var(--border); margin:0.3125rem 0.25rem; }
+    .acc-manage .acc-opt-txt{ color:var(--purple-dk); font-weight:700; font-size:0.875rem; }
+    .acc-manage svg{ flex:none; width:1rem; height:1rem; color:var(--purple-dk); }
+    .acc-empty{ padding:0.625rem; color:var(--hint); font-size:0.8125rem; text-align:center; }
+    .icon-btn{
+      display:inline-flex; align-items:center; gap:0.375rem;
+      width:auto; margin:0; padding:0.5rem 0.75rem;
+      background:var(--card_bg); border:0.0625rem solid var(--border);
+      color:var(--text); border-radius:62.4375rem; font-weight:700; font-size:0.8125rem;
+      cursor:pointer; box-shadow:0 0.0625rem 0.125rem rgba(27,20,37,.05);
+      transition:border-color .2s, background .2s, color .2s;
+    }
+    .icon-btn:hover{ border-color:var(--orange); color:var(--orange-dk); }
+    /* Settings gear gets the accent treatment so the dictionaries are easy to find. */
+    .icon-btn.accent{ color:var(--purple-dk); border-color:rgba(168,85,247,.30); background:rgba(168,85,247,.06); }
+    .icon-btn.accent:hover{ color:#fff; background:var(--purple); border-color:var(--purple); }
+    .icon-btn:active{ transform:translateY(0.0625rem); }
+    .icon-btn:disabled{ opacity:.6; cursor:default; }
+    .icon-btn svg{ width:1.125rem; height:1.125rem; display:block; }
+    /* Fullscreen toggle is only useful on desktop — mobile Telegram opens fullscreen by default */
+    @media (hover:none) and (pointer:coarse){ .desktop-only{ display:none !important; } }
+
+    /* ---------- Tabs ---------- */
+    .tabs{
+      flex:none;
+      display:flex; gap:0.375rem; padding:0.3125rem; margin-bottom:1.125rem;
+      background:var(--card_bg); border:0.0625rem solid var(--border);
+      border-radius:62.4375rem; box-shadow:0 0.0625rem 0.1875rem rgba(27,20,37,.05);
+    }
+    .tab{
+      flex:1; display:inline-flex; align-items:center; justify-content:center; gap:0.5rem;
+      width:auto; margin:0; padding:0.6875rem 0.625rem; border:none; background:transparent;
+      border-radius:62.4375rem; white-space:nowrap; cursor:pointer;
+      font-family:inherit; color:var(--hint); font-weight:700; font-size:0.8125rem;
+      transition:color .2s, background .2s;
+    }
+    .tab:hover:not(.active){ color:var(--orange-dk); background:var(--hover); }
+    .tab.active{ color:#fff; background:var(--grad); box-shadow:0 0.25rem 0.75rem rgba(249,115,22,.28); }
+    .badge{
+      display:inline-flex; align-items:center; justify-content:center;
+      min-width:1.25rem; height:1.25rem; padding:0 0.375rem; border-radius:62.4375rem;
+      font-size:0.75rem; font-weight:800; background:rgba(27,20,37,.07); color:var(--hint);
+    }
+    .tab.active .badge{ background:rgba(255,255,255,.30); color:#fff; }
+
+    /* ---------- View system ---------- */
+    main{ flex:1 1 auto; min-height:0; display:flex; }
+    .view{ flex:1 1 auto; min-height:0; width:100%; }
+    .view[hidden]{ display:none !important; }
+    /* New / Transactions / Dashboard each scroll inside their own area. */
+    #view-new, #view-table, #view-dash, #view-settings{ overflow-y:auto; -webkit-overflow-scrolling:touch; }
+    .col{ max-width:42.5rem; margin-inline:auto; padding-bottom:1.5rem; } /* narrow form column */
+    #view-table .col{ max-width:100%; }                              /* table uses full width */
+
+    /* ---------- Card ---------- */
+    .card{
+      background:var(--card_bg); border:0.0625rem solid var(--border);
+      border-radius:1.25rem; padding:1.125rem;
+      box-shadow:0 0.125rem 0.5rem rgba(27,20,37,.05), 0 0.5rem 1.75rem rgba(124,58,237,.05);
+    }
+    .title{ font-size:1.5rem; font-weight:800; }
+    .subtitle{ color:var(--hint); margin:0.375rem 0 0.5rem; font-size:0.875rem; }
+
+    label{
+      display:block; margin:0.875rem 0 0.375rem;
+      font-weight:700; font-size:0.6875rem; text-transform:uppercase; letter-spacing:.14em;
+      color:var(--hint);
+    }
+    /* Required-field marker — a small red star after the label text. Added via ::after so
+       it survives applyI18n() re-setting the label's textContent on language switch. */
+    label.req::after{ content:" *"; color:var(--neg); font-weight:700; }
+
+    input,select,textarea{
+      width:100%; padding:0.75rem; font-size:1rem; font-family:inherit;
+      color:var(--text); background:var(--field_bg);
+      border:0.0625rem solid var(--field_border); border-radius:var(--radius);
+      outline:none; box-sizing:border-box;
+      transition:border-color .18s ease, box-shadow .18s ease, background-color .18s ease;
+    }
+    textarea{ resize:vertical; min-height:5.25rem; }
+    input::placeholder, textarea::placeholder{ color:var(--hint); }
+    input:hover:not(:focus), select:hover:not(:focus){ border-color:rgba(168,85,247,.45); background:var(--hover); }
+    input:focus, select:focus, textarea:focus{
+      border-color:var(--orange);
+      box-shadow:0 0 0 0.25rem var(--field_focus);
+    }
+    select{ appearance:none; -webkit-appearance:none;
+      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%236b6478' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='4 6 8 10 12 6'/%3E%3C/svg%3E");
+      background-repeat:no-repeat; background-position:right 0.75rem center; padding-right:2.25rem;
+      transition:border-color .18s ease, box-shadow .18s ease, background-color .18s ease;
+    }
+    /* The native chevron rotates on open to signal the dropdown state. */
+    select:focus{ background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%23f97316' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='4 10 8 6 12 10'/%3E%3C/svg%3E"); }
+    select option, select optgroup{ background-color:var(--secondary_bg); color:var(--text); }
+    select option:disabled{ color:var(--hint); }
+
+    .row2{ display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; }
+
+    /* Date field with mobile placeholder overlay */
+    input[type="date"]{ height:2.875rem; line-height:2.875rem; appearance:none; -webkit-appearance:none; }
+    input[type="date"]:not(:valid){ color:var(--hint); }
+    input[type="date"]:valid{ color:var(--text); }
+    input[type="date"]::-webkit-calendar-picker-indicator{ opacity:.6; cursor:pointer; }
+    input[type="date"]::-webkit-inner-spin-button,
+    input[type="date"]::-webkit-clear-button{ display:none; }
+    /* Total field is type=number — hide the native up/down spinner. */
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button{ -webkit-appearance:none; margin:0; }
+    input[type="number"]{ -moz-appearance:textfield; appearance:textfield; }
+    .date-field{ position:relative; }
+    .date-placeholder, .date-value{ display:none; }
+    @media (hover:none) and (pointer:coarse){
+      .date-placeholder, .date-value{
+        align-items:center; gap:0.375rem;
+        position:absolute; left:0.8125rem; top:50%; transform:translateY(-50%);
+        pointer-events:none; font-size:0.9375rem;
+      }
+      .date-placeholder{ display:flex; color:var(--hint); }
+      .date-value{ color:var(--text); }
+      .date-field:focus-within .date-placeholder,
+      .date-field.has-value .date-placeholder{ display:none; }
+      /* Native date inputs render their value in the OS locale and can't be reformatted,
+         so on mobile we overlay our own locale-formatted text (which includes the Ukrainian
+         "р." year suffix) and make the native value transparent. */
+      .date-field.has-value .date-value{ display:flex; }
+      .date-field.has-value input[type="date"]{ color:transparent; }
+    }
+
+    /* ---------- Buttons ---------- */
+    .btn-gradient{
+      width:100%; margin-top:1.125rem; padding:0.875rem;
+      border:none; border-radius:62.4375rem;
+      background:var(--grad); color:#fff;
+      font-family:inherit; font-weight:800; font-size:1rem; cursor:pointer;
+      box-shadow:0 0.5rem 1.5rem rgba(249,115,22,.28);
+      transition:box-shadow .2s ease, filter .2s ease;
+    }
+    .btn-gradient:hover{ box-shadow:0 0.625rem 1.75rem rgba(168,85,247,.34); filter:saturate(1.1); }
+    .btn-ghost{
+      width:100%; margin-top:0.625rem; padding:0.8125rem;
+      background:transparent; border:0.0625rem solid var(--border); color:var(--text);
+      border-radius:62.4375rem; font-family:inherit; font-weight:700; font-size:0.9375rem; cursor:pointer;
+      display:inline-flex; align-items:center; justify-content:center; gap:0.5rem;
+      transition:border-color .2s ease, color .2s ease, background .2s ease;
+    }
+    .btn-ghost:hover{ border-color:var(--purple); color:var(--purple-dk); background:var(--hover); }
+    .btn-gradient:active, .btn-ghost:active{ transform:translateY(0.0625rem); }
+    .btn-gradient:disabled, .btn-ghost:disabled{ opacity:.6; cursor:default; }
+    .btn-ghost svg{ width:1.125rem; height:1.125rem; }
+    .hint{ color:var(--hint); font-size:0.75rem; margin-top:0.875rem; text-align:center; }
+    /* Inline hint that belongs to the field right above it (not a footer note). */
+    .hint.field-hint{ margin:0.375rem 0 0; text-align:left; }
+    /* Non-blocking inline warning (e.g. payable settled exceeds accrued). */
+    .form-warn{
+      margin:0.75rem 0 0; padding:0.625rem 0.75rem; border-radius:0.625rem;
+      background:rgba(220,38,38,.07); border:0.0625rem solid rgba(220,38,38,.28);
+      color:#b91c1c; font-size:0.78125rem; line-height:1.35;
+    }
+
+    .or-divider{
+      display:flex; align-items:center; gap:0.875rem; margin:1.5rem 0 0.375rem;
+      color:var(--hint); font-size:0.875rem; font-weight:700; text-transform:uppercase; letter-spacing:.14em;
+    }
+    .or-divider::before, .or-divider::after{
+      content:""; flex:1; height:0.0625rem; background:var(--border);
+    }
+
+    /* ---------- Transactions table ---------- */
+    .head{ display:flex; align-items:flex-end; justify-content:space-between; gap:0.75rem; margin-bottom:0.375rem; }
+    .table-wrap{ overflow-x:auto; -webkit-overflow-scrolling:touch; margin:0 -0.25rem; }
+    table{ width:100%; border-collapse:collapse; font-size:0.875rem; }
+    thead th{
+      text-align:left; padding:0.625rem 0.625rem; font-size:0.6875rem; font-weight:700;
+      text-transform:uppercase; letter-spacing:.1em; color:var(--hint);
+      border-bottom:0.125rem solid transparent; border-image:var(--grad) 1; white-space:nowrap;
+    }
+    thead th.right{ text-align:right; }
+    tbody td{ padding:0.8125rem 0.625rem; border-bottom:0.0625rem solid var(--border); vertical-align:top; }
+    tbody tr:last-child td{ border-bottom:none; }
+    .t-date{ white-space:nowrap; color:var(--text); }
+    .t-total{ font-weight:800; white-space:nowrap; }
+    /* Direction colours mirror the mobile cards (.txc-amt / .tx-card::before). */
+    .t-total.in{ color:var(--pos); } .t-total.out{ color:var(--neg); }
+    .t-total.recv{ color:var(--recv); } .t-total.pay{ color:var(--pay); }
+    .t-total.tr{ color:var(--tr); }
+    /* Left accent bar — inset top/bottom so a small gap shows between rows. */
+    tbody td:first-child{ position:relative; }
+    tbody tr.in td:first-child::before,
+    tbody tr.out td:first-child::before,
+    tbody tr.recv td:first-child::before,
+    tbody tr.pay td:first-child::before,
+    tbody tr.tr td:first-child::before{
+      content:""; position:absolute; left:0; top:0.5rem; bottom:0.5rem; width:0.1875rem; border-radius:0.1875rem;
+    }
+    tbody tr.in   td:first-child::before{ background:var(--pos); }
+    tbody tr.out  td:first-child::before{ background:var(--neg); }
+    tbody tr.recv td:first-child::before{ background:var(--recv); }
+    tbody tr.pay  td:first-child::before{ background:var(--pay); }
+    tbody tr.tr   td:first-child::before{ background:var(--tr); }
+    tbody tr:hover td{ background:var(--hover); }
+    .t-comment{ color:var(--hint); max-width:10rem; }
+    .cur-chip{
+      display:inline-block; padding:0.1875rem 0.5625rem; border-radius:62.4375rem;
+      border:0.0625rem solid var(--border); font-size:0.75rem; font-weight:700; white-space:nowrap;
+    }
+    .row-actions{ display:inline-flex; gap:0.125rem; align-items:center; justify-content:flex-end; }
+    .del, .edit{
+      width:auto; margin:0; padding:0.25rem 0.375rem; background:transparent; border:none;
+      color:var(--hint); cursor:pointer; font-size:1rem; line-height:1; border-radius:0.5rem;
+      display:inline-flex; align-items:center; justify-content:center;
+    }
+    .del:hover{ color:var(--neg); background:rgba(220,38,38,.08); }
+    .edit:hover{ color:var(--purple-dk); background:var(--hover); }
+    .edit svg{ width:1rem; height:1rem; display:block; }
+    th.act, td.act{ width:4rem; text-align:right; }
+
+    /* ---------- Transaction cards (mobile) ---------- */
+    .tx-cards{ display:none; flex-direction:column; gap:0.625rem; }
+    .tx-card{
+      position:relative; overflow:hidden; min-width:0;
+      background:var(--card_bg); border:0.0625rem solid var(--border); border-radius:1rem;
+      padding:0.8125rem 0.875rem 0.8125rem 1.125rem;
+      box-shadow:0 0.0625rem 0.1875rem rgba(27,20,37,.05);
+    }
+    .tx-card::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:0.25rem; }
+    .tx-card.in::before{ background:linear-gradient(#22c55e,#16a34a); }
+    .tx-card.out::before{ background:linear-gradient(#ef4444,#dc2626); }
+    .tx-card.recv::before{ background:linear-gradient(#3b82f6,#2563eb); }
+    .tx-card.pay::before{ background:linear-gradient(#fb923c,#d97706); }
+    .tx-card.tr::before{ background:linear-gradient(#9ca3af,#6b6478); }
+    .txc-top{ display:flex; align-items:center; gap:0.625rem; }
+    .txc-cp{ font-weight:700; font-size:0.9375rem; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .txc-amt{ flex:none; font-size:1.0625rem; font-weight:800; white-space:nowrap; }
+    .txc-amt.in{ color:var(--pos); } .txc-amt.out{ color:var(--neg); }
+    .txc-amt.recv{ color:var(--recv); } .txc-amt.pay{ color:var(--pay); }
+    .txc-amt.tr{ color:var(--tr); }
+    .txc-row2{ display:flex; align-items:center; justify-content:space-between; gap:0.625rem; margin-top:0.4375rem; }
+    .txc-date{ font-size:0.78125rem; color:var(--hint); }
+    .txc-acts{ flex:none; display:inline-flex; gap:0.125rem; }
+    .txc-chips{ display:flex; flex-wrap:wrap; gap:0.375rem; margin-top:0.5625rem; }
+    .txc-chip{ display:inline-flex; align-items:center; padding:0.25rem 0.625rem; border-radius:62.4375rem;
+      border:0.0625rem solid var(--border); font-size:0.75rem; font-weight:700; white-space:nowrap; }
+    /* Provider chip is tinted purple so it reads apart from type/category at a glance. */
+    .txc-chip-pv{ border-color:rgba(168,85,247,.35); background:rgba(168,85,247,.08); color:var(--purple-dk); }
+    /* Account chip — blue, matching the account dot in Settings. Shown only in "all accounts" view. */
+    .txc-chip-acc{ border-color:rgba(37,99,235,.35); background:rgba(37,99,235,.08); color:var(--recv); }
+    .txc-comment{ font-size:0.8125rem; color:var(--hint); margin-top:0.5625rem; word-break:break-word; }
+    /* Mobile: show cards, hide the table */
+    @media (max-width:680px){
+      .tx-cards{ display:flex; }
+      #view-table .table-wrap{ display:none; }
+    }
+
+    /* Empty / status state (transactions) */
+    .empty{ text-align:center; padding:2.625rem 1rem 1.875rem; }
+    .empty-emoji{ font-size:2.5rem; }
+    .empty h3{ font-size:1.125rem; font-weight:800; margin-top:0.75rem; }
+    .empty p{ color:var(--hint); font-size:0.875rem; margin:0.5rem 0 0; }
+    .footer-actions{ margin-top:1rem; display:flex; flex-direction:column; gap:0.625rem; }
+
+    /* ---------- Transactions filters + sum row ---------- */
+    .tbl-filters{ margin-bottom:0.875rem; }
+    /* The "Filters" toggle is desktop-hidden; the filter bar is always open on desktop. */
+    .tbl-filters-toggle{ display:none; }
+    .ftog-count{
+      display:inline-flex; align-items:center; justify-content:center; min-width:1.125rem; height:1.125rem;
+      padding:0 0.3125rem; border-radius:62.4375rem; background:var(--grad); color:#fff;
+      font-size:0.6875rem; font-weight:800; line-height:1;
+    }
+    @media (max-width:680px){
+      .tbl-filters-toggle{
+        width:100%; display:inline-flex; align-items:center; gap:0.5rem;
+        margin-bottom:0.875rem; padding:0.625rem 0.875rem; border-radius:0.875rem;
+        background:var(--field_bg); border:0.0625rem solid var(--field_border); color:var(--text);
+        font-family:inherit; font-weight:700; font-size:0.875rem; cursor:pointer;
+      }
+      .tbl-filters-toggle .ftog-ico{ width:1rem; height:1rem; flex:none; color:var(--hint); }
+      .tbl-filters-toggle .ftog-caret{ width:1rem; height:1rem; flex:none; margin-left:auto; color:var(--hint); transition:transform .2s ease; }
+      .tbl-filters-toggle[aria-expanded="true"] .ftog-caret{ transform:rotate(180deg); }
+      /* Collapsed by default on mobile; revealed when #content has .filters-open. Both
+         classes are named so this outranks the base `.dash-filters{ display:flex }`. */
+      .dash-filters.tbl-filters{ display:none; }
+      #content.filters-open .tbl-filters{ display:flex; }
+    }
+    .btn-clear-filters{
+      flex:none; display:inline-flex; align-items:center; gap:0.375rem;
+      padding:0.4375rem 0.75rem; border-radius:62.4375rem;
+      background:var(--field_bg); border:0.0625rem solid var(--field_border); color:var(--hint);
+      font-family:inherit; font-weight:700; font-size:0.75rem; cursor:pointer; white-space:nowrap;
+      transition:border-color .15s ease, color .15s ease;
+    }
+    .btn-clear-filters:hover{ color:var(--neg); border-color:rgba(220,38,38,.45); background:rgba(220,38,38,.06); }
+    .btn-clear-filters:active{ transform:translateY(0.0625rem); }
+    .btn-clear-filters svg{ width:0.875rem; height:0.875rem; }
+    tfoot .sum-row td{ border-top:0.125rem solid var(--border); border-bottom:none; padding-top:0.875rem; }
+    .sum-inner{ display:flex; align-items:center; justify-content:space-between; gap:0.75rem; flex-wrap:wrap; }
+    .sum-label{ font-size:0.6875rem; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:var(--hint); }
+    .sum-vals{ display:flex; gap:0.875rem; flex-wrap:wrap; justify-content:flex-end; }
+    .sum-amt{ font-weight:800; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .sum-amt.pos{ color:var(--pos); } .sum-amt.neg{ color:var(--neg); }
+    .tx-noresults{ padding:1.75rem 0.5rem; text-align:center; color:var(--hint); font-size:0.875rem; }
+    /* Mobile total — a flush summary footer under the list (desktop uses the table tfoot).
+       Top border separates it from the last card, mirroring the desktop footer row. */
+    .tx-sum{ display:none; }
+    @media (max-width:680px){
+      .tx-sum{
+        display:flex; align-items:center; justify-content:space-between; gap:0.375rem 0.875rem; flex-wrap:wrap;
+        margin-top:0.875rem; padding-top:0.875rem; border-top:0.125rem solid var(--border);
+      }
+      /* Dashboard filters on mobile: date range first (From, To), currency last. */
+      .dash-ctl-cur{ order:1; }
+    }
+    .btn-ghost-clear{
+      width:100%; margin:0; padding:0.8125rem; background:transparent;
+      border:0.0625rem solid var(--border); color:var(--text);
+      border-radius:62.4375rem; font-family:inherit; font-weight:700; font-size:0.9375rem; cursor:pointer;
+      display:inline-flex; align-items:center; justify-content:center; gap:0.5rem;
+    }
+    .btn-ghost-clear svg{ width:1.125rem; height:1.125rem; }
+
+    /* ---------- Toast ---------- */
+    .toast{
+      /* Lifted clear of the home-indicator / bottom inset when fullscreen. */
+      position:fixed; left:50%; bottom:calc(1.5rem + var(--inset-bottom, 0px));
+      transform:translateX(-50%) translateY(1.125rem); opacity:0; pointer-events:none;
+      background:var(--grad); color:#fff; padding:0.75rem 1.25rem; border-radius:62.4375rem;
+      font-weight:700; font-size:0.875rem; box-shadow:0 0.625rem 1.875rem rgba(124,58,237,.30);
+      transition:opacity .25s, transform .25s; z-index:150; max-width:90vw; text-align:center;
+    }
+    .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+    /* ---------- Dashboard ---------- */
+    .dash-col{ max-width:61.25rem; margin-inline:auto; padding-bottom:1.5rem; }
+    .dash-filters{ display:flex; gap:0.625rem; flex-wrap:wrap; margin-bottom:1rem; }
+    .dash-ctl{ flex:1 1 9.375rem; min-width:8.75rem; }
+    .dash-ctl > label{ margin:0 0 0.375rem; }
+    .dash-ctl select{ width:100%; }
+    .chips-ctl{ margin-bottom:0.875rem; }
+    .chips{ display:flex; gap:0.4375rem; flex-wrap:wrap; }
+    .chip{
+      font-size:0.75rem; padding:0.375rem 0.6875rem; border-radius:62.4375rem;
+      border:0.0625rem solid var(--border); background:var(--card_bg); color:var(--hint);
+      cursor:pointer; user-select:none; white-space:nowrap;
+      display:inline-flex; align-items:center; gap:0.375rem;
+      transition:color .15s, background .15s, border-color .15s;
+    }
+    .chip .dot{ width:0.5rem; height:0.5rem; border-radius:50%; background:currentColor; }
+    .chip.on{ color:#fff; }
+    .chip:active{ transform:translateY(0.0625rem); }
+
+    /* KPI cards */
+    .kpis{ display:grid; grid-template-columns:repeat(2,1fr); gap:0.625rem; margin:0.25rem 0 1rem; }
+    .kpi{
+      position:relative; overflow:hidden; min-width:0;
+      background:var(--card_bg); border:0.0625rem solid var(--border); border-radius:1rem;
+      padding:0.875rem 0.875rem 0.75rem; backdrop-filter:blur(0.625rem); -webkit-backdrop-filter:blur(0.625rem);
+    }
+    .kpi::before{ content:""; position:absolute; left:0; top:0; height:0.1875rem; width:100%;
+      background:var(--accent, var(--grad)); }
+    .kpi .k-label{ font-size:0.65625rem; color:var(--hint); text-transform:uppercase; letter-spacing:.1em; font-weight:700; }
+    .kpi .k-val{ font-size:1.375rem; font-weight:800; margin-top:0.375rem; line-height:1.05; letter-spacing:-0.03125rem; word-break:break-word; }
+
+    /* Chart grid. min-width:0 lets grid items shrink below the canvas's intrinsic width
+       so a (momentarily stale) wide chart can't force horizontal scroll / block reflow. */
+    .dash-grid{ display:grid; grid-template-columns:1fr; gap:0.75rem; }
+    .dash-card{ padding:1rem; min-width:0; }
+    .dash-card h3{ font-size:0.9375rem; font-weight:800; }
+    .dash-card .sub{ margin:0.125rem 0 0.75rem; font-size:0.75rem; color:var(--hint); }
+    .dash-card .canvas-host{ position:relative; width:100%; min-width:0; height:15rem; }
+    .dash-card.donut .canvas-host, .dash-card.tall .canvas-host{ height:17.5rem; }
+    .dash-card .canvas-host canvas{ display:block; max-width:100%; }
+
+    /* ---------- Data tables (P&L statement + counterparty balances) ---------- */
+    .data-card{
+      background:var(--secondary_bg); border:0.0625rem solid var(--border); border-radius:1rem;
+      padding:1rem; margin-top:0.75rem; min-width:0;
+    }
+    .data-card h3{ font-size:0.9375rem; font-weight:800; }
+    .data-card .sub{ margin:0.125rem 0 0.75rem; font-size:0.75rem; color:var(--hint); }
+    /* Horizontal scroll keeps the wide month matrix usable on mobile; the first column
+       (row labels) stays pinned so you never lose track of the row while scrolling.
+       NB: no horizontal padding on the scroll box — a padded scrollport would offset the
+       sticky `left:0` column and leave a strip where scrolled cells peek through. */
+    .data-scroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    table.pivot{ border-collapse:collapse; font-size:0.8125rem; white-space:nowrap; min-width:100%; }
+    table.pivot th, table.pivot td{ padding:0.5625rem 0.875rem; text-align:right; border-bottom:0.0625rem solid var(--border); }
+    table.pivot th:first-child, table.pivot td:first-child{ padding-left:0; }
+    table.pivot thead th{
+      font-size:0.6875rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--hint);
+    }
+    table.pivot .rowlabel{
+      position:sticky; left:0; z-index:1; text-align:left; background:var(--secondary_bg);
+      font-weight:600; max-width:10rem; overflow:hidden; text-overflow:ellipsis; padding-right:1.125rem;
+    }
+    table.pivot thead .rowlabel{ z-index:3; }
+    table.pivot tbody tr:last-child td{ border-bottom:none; }
+    table.pivot .r-section td, table.pivot .r-section .rowlabel{ font-weight:800; color:var(--text); }
+    table.pivot .r-total td, table.pivot .r-total .rowlabel{ font-weight:800; border-top:0.125rem solid var(--border); }
+    table.pivot .r-cat .rowlabel{ font-weight:500; color:var(--hint); padding-left:1.625rem; }
+    /* Net income / net cash flow (accent), dividends line, and the margin % row. */
+    table.pivot .r-net td, table.pivot .r-net .rowlabel{ color:var(--purple-dk); }
+    table.pivot .r-div .rowlabel{ font-weight:600; }
+    table.pivot .r-margin td, table.pivot .r-margin .rowlabel{ font-weight:700; border-top:0.0625rem dashed var(--border); }
+    table.pivot .num{ font-variant-numeric:tabular-nums; }
+    table.pivot .pos{ color:var(--pos); }
+    table.pivot .neg{ color:var(--neg); }
+    table.pivot .muted{ color:var(--hint); }
+    .data-empty{ padding:1.125rem 0.25rem; color:var(--hint); font-size:0.84375rem; text-align:center; }
+
+    /* ---------- Settings ----------
+       Header (back · title) → segmented switcher → one section panel at a time. */
+    .set-head{ display:flex; align-items:center; gap:0.625rem; margin-bottom:0.875rem; }
+    .set-head .title{ font-size:1.375rem; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .set-back{
+      flex:none; width:2.25rem; height:2.25rem; margin:0; padding:0;
+      display:inline-flex; align-items:center; justify-content:center;
+      background:var(--card_bg); border:0.0625rem solid var(--border); border-radius:62.4375rem;
+      color:var(--text); cursor:pointer; transition:border-color .2s, color .2s, background .2s;
+    }
+    .set-back:hover{ border-color:var(--orange); color:var(--orange-dk); background:var(--hover); }
+    .set-back:active{ transform:translateY(0.0625rem); }
+    .set-back svg{ width:1.125rem; height:1.125rem; display:block; }
+
+    /* Segmented switcher — a smaller sibling of the main .tabs bar. */
+    .subtabs{
+      display:flex; gap:0.25rem; padding:0.25rem; margin-bottom:0.875rem;
+      background:var(--card_bg); border:0.0625rem solid var(--border);
+      border-radius:62.4375rem; box-shadow:0 0.0625rem 0.1875rem rgba(27,20,37,.05);
+    }
+    .subtab{
+      flex:1; min-width:0; width:auto; margin:0; padding:0.5rem 0.375rem;
+      border:none; background:transparent; border-radius:62.4375rem; cursor:pointer;
+      font-family:inherit; font-weight:700; font-size:0.75rem; color:var(--hint);
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+      transition:color .2s, background .2s;
+    }
+    .subtab:hover:not(.active){ color:var(--orange-dk); background:var(--hover); }
+    .subtab.active{ color:#fff; background:var(--grad); box-shadow:0 0.1875rem 0.5rem rgba(249,115,22,.24); }
+    /* Four sections don't fit a phone at the base size — tighten rather than ellipsize. */
+    @media (max-width:430px){
+      .subtabs{ gap:0.125rem; padding:0.1875rem; }
+      .subtab{ padding:0.5rem 0.25rem; font-size:0.6875rem; }
+    }
+
+    /* ---------- Settings › section panels (accounts / counterparties / providers) ---------- */
+    .dict-card{ margin-bottom:0.875rem; }
+    .dict-head{ display:flex; align-items:center; gap:0.625rem; }
+    .dict-head h3{ font-size:1rem; font-weight:800; flex:1; min-width:0; }
+    .dict-count{
+      flex:none; display:inline-flex; align-items:center; justify-content:center;
+      min-width:1.5rem; height:1.5rem; padding:0 0.5rem; border-radius:62.4375rem;
+      background:var(--hover); color:var(--purple-dk); font-size:0.75rem; font-weight:800;
+    }
+    /* ＋ opens the add form and becomes ✕ (same glyph, rotated 45°) while it's open. */
+    .dict-add-toggle{
+      flex:none; width:2rem; height:2rem; margin:0; padding:0; border:none; border-radius:62.4375rem;
+      background:var(--grad); color:#fff; cursor:pointer;
+      display:inline-flex; align-items:center; justify-content:center;
+      box-shadow:0 0.1875rem 0.5rem rgba(249,115,22,.26);
+      transition:transform .2s ease, box-shadow .2s ease, filter .2s ease;
+    }
+    .dict-add-toggle:hover{ box-shadow:0 0.3125rem 0.875rem rgba(168,85,247,.32); filter:saturate(1.1); }
+    .dict-add-toggle[aria-expanded="true"]{ transform:rotate(45deg); }
+    .dict-add-toggle svg{ width:1.125rem; height:1.125rem; display:block; }
+
+    /* Add form — revealed by ＋, so the list stays the main content. */
+    .dict-form{
+      display:flex; gap:0.5rem; margin-top:0.875rem; padding-top:0.875rem;
+      border-top:0.0625rem solid var(--border);
+    }
+    .dict-form input{ flex:1; min-width:0; }
+    .dict-submit{
+      flex:none; width:auto; margin:0; padding:0 1.125rem; height:2.875rem;
+      border:none; border-radius:var(--radius); background:var(--grad); color:#fff;
+      font-family:inherit; font-weight:800; font-size:0.875rem; cursor:pointer; white-space:nowrap;
+      box-shadow:0 0.25rem 0.75rem rgba(249,115,22,.26);
+      transition:box-shadow .2s ease, filter .2s ease;
+    }
+    .dict-submit:hover{ box-shadow:0 0.375rem 1rem rgba(168,85,247,.32); filter:saturate(1.1); }
+    .dict-submit:disabled{ opacity:.55; cursor:default; box-shadow:none; }
+
+    /* Search — appears only once a list is long enough to need it. */
+    .dict-search{ margin-top:0.875rem; }
+    .dict-search input{ width:100%; }
+    .dict-search input[type="search"]::-webkit-search-cancel-button{ cursor:pointer; }
+
+    .dict-list{ list-style:none; margin:0.875rem 0 0; padding:0; }
+    .dict-item{
+      display:flex; align-items:center; gap:0.625rem;
+      padding:0.625rem 0.25rem 0.625rem 0.75rem; border-radius:0.75rem;
+      border:0.0625rem solid transparent; transition:background .15s ease, border-color .15s ease;
+    }
+    .dict-item + .dict-item{ margin-top:0.25rem; }
+    .dict-item:hover{ background:var(--hover); border-color:var(--border); }
+    /* Colour dot distinguishes the two dictionaries at a glance. */
+    .dict-dot{ flex:none; width:0.5rem; height:0.5rem; border-radius:50%; }
+    .dict-cp .dict-dot{ background:var(--orange); }
+    .dict-pv .dict-dot{ background:var(--purple); }
+    .dict-acc .dict-dot{ background:var(--recv); }
+    .dict-cat .dict-dot{ background:var(--pos); }
+    /* The category add-form carries a hint under the field, like the accounts one. */
+    .dict-form-cat{ flex-wrap:wrap; }
+    .dict-form-cat .field-hint{ flex:1 0 100%; }
+    /* Accounts take a name, a currency and an opening balance — more than one row can hold on
+       a phone: name spans the top, then currency | balance | submit, hint underneath. */
+    .dict-form-acc{ display:grid; grid-template-columns:1fr 1fr auto; gap:0.5rem; align-items:center; }
+    .dict-form-acc .dict-add-name,
+    .dict-form-acc .field-hint{ grid-column:1 / -1; }
+    .dict-form-acc .dict-add-bal{ width:auto; }   /* fills its grid cell instead of a fixed width */
+    .dict-add-bal{ flex:none; width:6.5rem; }
+    .dict-bal{ flex:none; font-size:0.8125rem; font-weight:700; color:var(--text); font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .dict-bal.neg{ color:var(--neg); }
+    /* Currency code chip on an account row — the balance next to it is then unit-less. */
+    .dict-chip{
+      flex:none; padding:0.125rem 0.4375rem; border-radius:0.375rem;
+      border:0.0625rem solid rgba(37,99,235,.30); background:rgba(37,99,235,.07);
+      color:var(--recv); font-size:0.625rem; font-weight:800; letter-spacing:.04em;
+    }
+    /* The name is a button: tapping it renames the entry in place. */
+    .dict-name{
+      flex:1; min-width:0; width:auto; margin:0; padding:0; text-align:left;
+      background:transparent; border:none; font-family:inherit; font-size:0.9375rem; font-weight:600;
+      color:var(--text); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+      border-bottom:0.0625rem dashed transparent; transition:color .15s ease, border-color .15s ease;
+    }
+    .dict-name:hover{ color:var(--purple-dk); border-bottom-color:rgba(168,85,247,.45); }
+    /* Rename mode: the row turns into a field with confirm / cancel. */
+    .dict-item.editing{ background:var(--hover); border-color:var(--border); }
+    .dict-rename{ flex:1; min-width:0; padding:0.4375rem 0.625rem; font-size:0.9375rem; }
+    .dict-ok, .dict-cancel{
+      flex:none; width:auto; margin:0; padding:0.375rem; background:transparent; border:none;
+      cursor:pointer; border-radius:0.5rem; line-height:1;
+      display:inline-flex; align-items:center; justify-content:center;
+    }
+    .dict-ok{ color:var(--pos); } .dict-ok:hover{ background:rgba(22,163,74,.10); }
+    .dict-cancel{ color:var(--hint); } .dict-cancel:hover{ color:var(--neg); background:rgba(220,38,38,.08); }
+    .dict-ok svg, .dict-cancel svg{ width:1.125rem; height:1.125rem; display:block; }
+    .dict-del{
+      flex:none; width:auto; margin:0; padding:0.375rem; background:transparent; border:none;
+      color:var(--hint); cursor:pointer; border-radius:0.5rem; line-height:1;
+      display:inline-flex; align-items:center; justify-content:center;
+    }
+    .dict-del:hover{ color:var(--neg); background:rgba(220,38,38,.08); }
+    .dict-del:disabled{ opacity:.5; cursor:default; }
+    .dict-del svg{ width:1rem; height:1rem; display:block; }
+    .dict-empty{ padding:1rem 0.25rem; color:var(--hint); font-size:0.84375rem; text-align:center; }
+
+    @media (min-width:560px){ .kpis{ grid-template-columns:repeat(4,1fr); } }
+    @media (min-width:760px){
+      .dash-grid{ grid-template-columns:1fr 1fr; }
+      .dash-card.span2{ grid-column:span 2; }
+    }
+    @media (min-width:1100px){ .kpis{ grid-template-columns:repeat(4,1fr); } }
+
+    /* ---------- Custom select + date picker (desktop enhancement) ---------- */
+    .ui-select{ position:relative; width:100%; }
+    .ui-trigger{
+      width:100%; min-height:2.875rem; padding:0.6875rem 0.75rem; font-size:1rem; font-family:inherit;
+      color:var(--text); background:var(--field_bg); border:0.0625rem solid var(--field_border);
+      border-radius:var(--radius); cursor:pointer; outline:none;
+      display:flex; align-items:center; gap:0.5rem;
+      transition:border-color .18s ease, box-shadow .18s ease, background-color .18s ease;
+    }
+    .ui-trigger:hover{ border-color:rgba(168,85,247,.45); background:var(--hover); }
+    .ui-select.open .ui-trigger, .ui-trigger:focus-visible{ border-color:var(--orange); box-shadow:0 0 0 0.25rem var(--field_focus); }
+    .ui-trigger-label{ flex:1; min-width:0; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .ui-trigger.placeholder .ui-trigger-label{ color:var(--hint); }
+    .ui-caret, .ui-calico{ width:1rem; height:1rem; flex:none; color:var(--hint); }
+    .ui-caret{ transition:transform .2s ease; }
+    .ui-select.open .ui-trigger .ui-caret{ transform:rotate(180deg); color:var(--orange); }
+    .ui-select.open .ui-trigger .ui-calico{ color:var(--orange); }
+
+    .ui-pop{
+      position:fixed; z-index:120; background:var(--secondary_bg);
+      border:0.0625rem solid var(--border); border-radius:0.875rem; padding:0.375rem;
+      box-shadow:0 1.125rem 3.125rem rgba(27,20,37,.18), 0 0.25rem 0.75rem rgba(27,20,37,.08);
+      opacity:0; transform:translateY(-0.375rem) scale(.98); transform-origin:top center;
+      transition:opacity .15s ease, transform .15s ease; pointer-events:none;
+    }
+    .ui-pop.show{ opacity:1; transform:translateY(0) scale(1); pointer-events:auto; }
+    .ui-pop-list{ max-height:17.5rem; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+    .ui-opt{
+      padding:0.625rem 0.75rem; border-radius:0.5625rem; font-size:0.9375rem; color:var(--text); cursor:pointer;
+      display:flex; align-items:center; gap:0.5rem; transition:background-color .12s ease;
+    }
+    .ui-opt-txt{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .ui-opt.active{ background:var(--hover); }
+    .ui-opt.selected{ background:linear-gradient(135deg,rgba(249,115,22,.16),rgba(168,85,247,.16)); color:var(--text); font-weight:600; }
+    .ui-opt.disabled{ color:var(--hint); opacity:.6; cursor:default; }
+    .ui-check{ width:1rem; height:1rem; flex:none; color:var(--orange); opacity:0; }
+    .ui-opt.selected .ui-check{ opacity:1; }
+    /* Multi-select "All" (clear) row — separated from the option list below it. */
+    .ui-opt-all{ border-bottom:0.0625rem solid var(--border); margin-bottom:0.1875rem; padding-bottom:0.625rem; border-radius:0.5625rem 0.5625rem 0 0; }
+
+    /* calendar */
+    .ui-cal{ width:18.75rem; max-width:calc(100vw - 1rem); }
+    .ui-cal-head{ display:flex; align-items:center; justify-content:space-between; padding:0.25rem 0.25rem 0.625rem; }
+    .ui-cal-title{ font-family:'Manrope',sans-serif; font-weight:700; font-size:0.9375rem; }
+    .ui-cal-nav{ display:flex; gap:0.375rem; }
+    .ui-cal-nav button{ width:1.875rem; height:1.875rem; border-radius:0.5625rem; border:0.0625rem solid var(--border);
+      background:var(--card_bg); color:var(--text); cursor:pointer; font-size:1.125rem; line-height:1;
+      display:inline-flex; align-items:center; justify-content:center; transition:border-color .15s, color .15s; }
+    .ui-cal-nav button:hover{ border-color:var(--orange); color:var(--orange); }
+    /* Fixed row height so a cell (esp. an empty leading/trailing one) can't stretch its row. */
+    .ui-cal-grid{ display:grid; grid-template-columns:repeat(7,1fr); grid-auto-rows:2.125rem; gap:0.125rem; }
+    .ui-cal-dow{ display:flex; align-items:center; justify-content:center; font-size:0.625rem; color:var(--hint); text-transform:uppercase; letter-spacing:.04em; font-weight:700; }
+    .ui-cal-day{ min-width:0; display:flex; align-items:center; justify-content:center; border-radius:0.5625rem;
+      font-size:0.8125rem; cursor:pointer; color:var(--text); transition:background-color .12s ease; }
+    .ui-cal-day.empty{ cursor:default; }
+    .ui-cal-day:not(.empty):not(.disabled):hover{ background:var(--hover); }
+    .ui-cal-day.today{ box-shadow:inset 0 0 0 0.0625rem var(--field_border); }
+    .ui-cal-day.selected{ background:var(--grad); color:#fff; font-weight:700; box-shadow:none; }
+    .ui-cal-day.disabled{ color:var(--hint); opacity:.3; cursor:default; }
+    .ui-cal-foot{ display:flex; justify-content:space-between; padding:0.5rem 0.125rem 0.125rem; }
+    .ui-cal-foot button{ background:transparent; border:none; color:var(--orange-dk); font-family:inherit;
+      font-weight:700; font-size:0.8125rem; cursor:pointer; padding:0.375rem 0.5rem; border-radius:0.5rem; transition:background-color .12s; }
+    .ui-cal-foot button:hover{ background:rgba(249,115,22,.12); }
+
+    /* ---------- Large/high-res screens: scale the whole UI up via the root font-size ----------
+       Every dimension in this stylesheet is in rem, so bumping :root's font-size scales the
+       entire UI uniformly — the same visual effect the old `body{ zoom:N }` hack produced, but
+       WITHOUT its breakage: charts become genuinely larger canvases (Chart.js renders them crisp
+       instead of magnifying a stale bitmap), and the fixed-position date popup / toast stay
+       correctly placed (no zoomed coordinate space). Viewport units (100dvh) deliberately do NOT
+       scale, so the body stays exactly one screen tall and each view scrolls internally — no
+       `height / N` compensation needed. Breakpoints stay in px (viewport-based, unaffected). */
+    @media (min-width:1600px){ :root{ font-size:20px; } }  /* 1.25x — matches old zoom:1.25 */
+    @media (min-width:2200px){ :root{ font-size:24px; } }  /* 1.5x  — matches old zoom:1.5  */
+  </style>
+</head>
+<body data-scheme="light">
+  <header class="topbar">
+    <!-- Account switcher: the app-wide scope (an account, or all of them) -->
+    <div class="acc-switch" id="accSwitch">
+      <button class="acc-trigger" id="accTrigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+        <svg class="acc-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M2 10h20"/><path d="M17 15h2"/></svg>
+        <!-- Label is written by renderAccSwitch() (no data-i18n: applyI18n would overwrite
+             the selected account's name with the static "all accounts" text). -->
+        <span class="acc-name" id="accName">Все счета</span>
+        <svg class="acc-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="acc-menu" id="accMenu" role="listbox" hidden></div>
+    </div>
+    <div class="actions">
+      <!-- Icon-only: the account picker now owns the left side of the top bar, so the
+           label is dropped and the name lives in the tooltip / aria-label instead. -->
+      <button class="icon-btn accent" id="settingsBtn" type="button"
+              data-i18n-title="btn.settings" title="Настройки"
+              data-i18n-aria="btn.settings" aria-label="Настройки">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+      <button class="icon-btn desktop-only" id="fsBtn" type="button" title="На весь экран">
+        <svg id="fsExpand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+        <svg id="fsCompress" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" type="button" data-view="new" data-i18n="tab.new">Добавить</button>
+    <button class="tab" type="button" data-view="table">
+      <span data-i18n="tab.list">Транзакции</span>
+      <span class="badge" id="countBadge">0</span>
+    </button>
+    <button class="tab" type="button" data-view="dash" data-i18n="tab.dash">Дашборд</button>
+  </nav>
+
+  <main>
+    <!-- ============ NEW ============ -->
+    <section class="view" id="view-new">
+      <div class="col">
+        <div class="card">
+          <h1 class="title gradient" data-i18n="form.title">Новая транзакция</h1>
+          <p class="subtitle" data-i18n="form.subtitle">Добавьте запись в ваш журнал.</p>
+
+          <label class="req" data-i18n="field.date">Дата</label>
+          <div class="date-field" id="dateWrap">
+            <input id="date" type="date" min="2025-01-01" required />
+            <span class="date-placeholder" data-i18n="ph.date">📅 Выберите дату</span>
+            <span class="date-value"></span>
+          </div>
+
+          <div class="row2">
+            <div>
+              <label class="req" data-i18n="field.total">Сумма</label>
+              <input id="total" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" autocomplete="off" />
+            </div>
+            <div>
+              <label data-i18n="field.currency">Валюта</label>
+              <!-- USDT first = the default selection (it's the app's base unit). -->
+              <select id="currency">
+                <option value="USDT">USDT</option>
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+              </select>
+            </div>
+          </div>
+
+          <label class="req" data-i18n="field.type">Тип</label>
+          <select id="type"><option value="" disabled selected data-i18n="ph.select">Выберите…</option></select>
+
+          <!-- Category sits right under the type: the list is type-scoped and reloads on
+               every type change (loadCategoriesForType), so the two belong side by side. -->
+          <label class="req" data-i18n="field.category">Категория</label>
+          <select id="category"><option value="" disabled selected data-i18n="ph.select">Выберите…</option></select>
+
+          <!-- Account(s). The form names its own accounts and ignores the top-bar picker
+               entirely (that one only changes what you're looking at), so an edit can move a
+               transaction between accounts without re-scoping the app. A transfer moves money
+               between two of your own accounts, so that type reveals the second cell and
+               turns the first into the source — see syncAccountFields(). -->
+          <div id="accountRow">
+            <div>
+              <label class="req" id="accountFromLabel" data-i18n="field.account">Счёт</label>
+              <select id="account"><option value="" disabled selected data-i18n="ph.select">Выберите…</option></select>
+            </div>
+            <div id="accountToCell" hidden>
+              <label class="req" data-i18n="field.account.to">На счёт</label>
+              <select id="accountTo"><option value="" disabled selected data-i18n="ph.select">Выберите…</option></select>
+            </div>
+          </div>
+
+          <label class="req" data-i18n="field.counterparty">Контрагент</label>
+          <select id="counterparty"><option value="" disabled selected data-i18n="ph.select">Выберите…</option></select>
+
+          <label data-i18n="field.provider">Поставщик</label>
+          <select id="provider"><option value="" disabled selected data-i18n="ph.select">Выберите…</option></select>
+
+          <p class="form-warn" id="payableWarn" hidden></p>
+
+          <label data-i18n="field.comment">Комментарий</label>
+          <textarea id="comment" rows="3" maxlength="40" data-i18n-ph="ph.comment" placeholder="За что?"></textarea>
+
+          <button class="btn-gradient" id="createBtn" type="button" data-i18n="btn.create">Создать транзакцию</button>
+          <button class="btn-ghost" id="cancelEditBtn" type="button" style="display:none" data-i18n="btn.cancel">Отменить</button>
+
+          <p class="hint" id="themeHint"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ TRANSACTIONS ============ -->
+    <section class="view" id="view-table" hidden>
+      <div class="col">
+        <div class="card">
+          <div class="head">
+            <div>
+              <h1 class="title gradient" data-i18n="table.title">Транзакции</h1>
+              <p class="subtitle" data-i18n="table.subtitle">Всё, что вы добавили.</p>
+            </div>
+            <button class="btn-clear-filters" id="clearFiltersBtn" type="button" hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+              <span data-i18n="tbl.f.clear">Сбросить фильтры</span>
+            </button>
+          </div>
+
+          <div id="content" style="display:none">
+            <!-- Filters: collapsed behind this toggle on mobile, always shown on desktop. -->
+            <button class="tbl-filters-toggle" id="filtersToggle" type="button" aria-expanded="false">
+              <svg class="ftog-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+              <span data-i18n="tbl.f.toggle">Фильтры</span>
+              <span class="ftog-count" id="filtersCount" hidden>0</span>
+              <svg class="ftog-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <!-- Filters -->
+            <div class="dash-filters tbl-filters">
+              <div class="dash-ctl">
+                <label data-i18n="tbl.f.type">Тип</label>
+                <select id="fType"></select>
+              </div>
+              <div class="dash-ctl">
+                <label data-i18n="tbl.f.cat">Категория</label>
+                <select id="fCat" multiple></select>
+              </div>
+              <div class="dash-ctl">
+                <label data-i18n="field.counterparty">Контрагент</label>
+                <select id="fCp" multiple></select>
+              </div>
+              <div class="dash-ctl">
+                <label data-i18n="field.provider">Поставщик</label>
+                <select id="fPv" multiple></select>
+              </div>
+              <div class="dash-ctl">
+                <label data-i18n="tbl.f.cur">Валюта</label>
+                <select id="fCur"></select>
+              </div>
+              <div class="dash-ctl">
+                <label data-i18n="dash.f.from">С</label>
+                <div class="date-field" id="fFromWrap">
+                  <input id="fFrom" type="date" min="2025-01-01">
+                  <span class="date-placeholder" data-i18n="dash.ph.from">📅 Дата с</span>
+                  <span class="date-value"></span>
+                </div>
+              </div>
+              <div class="dash-ctl">
+                <label data-i18n="dash.f.to">По</label>
+                <div class="date-field" id="fToWrap">
+                  <input id="fTo" type="date" min="2025-01-01">
+                  <span class="date-placeholder" data-i18n="dash.ph.to">📅 Дата по</span>
+                  <span class="date-value"></span>
+                </div>
+              </div>
+            </div>
+            <!-- Card list (mobile) -->
+            <div id="txCards" class="tx-cards"></div>
+            <!-- Table (desktop) -->
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th data-i18n="th.date">Дата</th>
+                    <th data-i18n="th.total">Сумма</th>
+                    <th data-i18n="th.currency">Валюта</th>
+                    <th data-i18n="th.type">Тип</th>
+                    <th data-i18n="th.category">Категория</th>
+                    <th data-i18n="th.counterparty">Контрагент</th>
+                    <th data-i18n="th.provider">Поставщик</th>
+                    <th data-i18n="th.account">Счёт</th>
+                    <th data-i18n="th.comment">Комментарий</th>
+                    <th class="act"></th>
+                  </tr>
+                </thead>
+                <tbody id="rows"></tbody>
+                <tfoot id="rowsFoot"></tfoot>
+              </table>
+            </div>
+            <!-- Sum summary (mobile) — sits below the list, mirroring the desktop table footer -->
+            <div id="txSum" class="tx-sum"></div>
+
+            <div class="footer-actions">
+              <button class="btn-ghost-clear" id="clearBtn" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+                <span data-i18n="btn.clear">Очистить всё</span>
+              </button>
+            </div>
+          </div>
+
+          <div id="empty" class="empty" style="display:none">
+            <div class="empty-emoji" id="emptyEmoji">🧾</div>
+            <h3 id="emptyTitle" data-i18n="empty.title">Пока нет транзакций</h3>
+            <p id="emptyText" data-i18n="empty.text">Создайте первую на вкладке «Добавить».</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ DASHBOARD ============ -->
+    <section class="view" id="view-dash" hidden>
+      <div class="col dash-col">
+        <div class="dash-filters">
+          <div class="dash-ctl dash-ctl-cur">
+            <label data-i18n="dash.f.currency">Валюта</label>
+            <select id="dashCurrency"></select>
+          </div>
+          <div class="dash-ctl">
+            <label data-i18n="dash.f.from">С</label>
+            <div class="date-field" id="dashFromWrap">
+              <input id="dashFrom" type="date" min="2025-01-01">
+              <span class="date-placeholder" data-i18n="dash.ph.from">📅 Дата с</span>
+              <span class="date-value"></span>
+            </div>
+          </div>
+          <div class="dash-ctl">
+            <label data-i18n="dash.f.to">По</label>
+            <div class="date-field" id="dashToWrap">
+              <input id="dashTo" type="date" min="2025-01-01">
+              <span class="date-placeholder" data-i18n="dash.ph.to">📅 Дата по</span>
+              <span class="date-value"></span>
+            </div>
+          </div>
+        </div>
+        <section class="kpis" id="dashKpis"></section>
+
+        <div id="dashContent">
+          <div class="dash-grid">
+            <div class="card dash-card span2">
+              <h3 data-i18n="dash.c.pnl">Прибыли и убытки</h3>
+              <p class="sub" id="pnlSub" data-i18n="dash.c.pnl.sub">Доходы · расходы · прибыль</p>
+              <div class="canvas-host"><canvas id="cPnl"></canvas></div>
+            </div>
+            <div class="card dash-card">
+              <h3 data-i18n="dash.c.net">Чистая прибыль</h3>
+              <p class="sub" data-i18n="dash.c.net.sub">Динамика по месяцам</p>
+              <div class="canvas-host"><canvas id="cNet"></canvas></div>
+            </div>
+            <div class="card dash-card">
+              <h3 data-i18n="dash.c.cash">Остаток средств</h3>
+              <p class="sub" data-i18n="dash.c.cash.sub">Нарастающим итогом</p>
+              <div class="canvas-host"><canvas id="cCash"></canvas></div>
+            </div>
+            <div class="card dash-card donut">
+              <h3 data-i18n="dash.c.exp">Структура расходов</h3>
+              <p class="sub" data-i18n="dash.c.exp.sub">По категориям</p>
+              <div class="canvas-host"><canvas id="cExp"></canvas></div>
+            </div>
+            <div class="card dash-card tall">
+              <h3 data-i18n="dash.c.topcp">Топ контрагентов по расходам</h3>
+              <p class="sub" data-i18n="dash.c.topcp.sub">Наибольшие траты</p>
+              <div class="canvas-host"><canvas id="cTopCp"></canvas></div>
+            </div>
+          </div>
+
+          <!-- P&L statement (point 7) — monthly pivot, ref image.png -->
+          <div class="data-card">
+            <h3 data-i18n="dash.pnl.title">Отчёт о прибылях и убытках</h3>
+            <p class="sub" data-i18n="dash.pnl.subtitle">По месяцам</p>
+            <div class="data-scroll"><table class="pivot" id="pnlTable"></table></div>
+          </div>
+
+          <!-- Cash flow statement — monthly pivot, direct method -->
+          <div class="data-card">
+            <h3 data-i18n="dash.cf.title">Отчёт о движении денежных средств</h3>
+            <p class="sub" data-i18n="dash.cf.subtitle">По месяцам · прямой метод</p>
+            <div class="data-scroll"><table class="pivot" id="cfTable"></table></div>
+          </div>
+
+          <!-- Debts by counterparty (point 8) -->
+          <div class="data-card">
+            <h3 data-i18n="dash.cp.title">Долги</h3>
+            <p class="sub" data-i18n="dash.cp.subtitle">По контрагентам</p>
+            <div class="data-scroll"><table class="pivot" id="cpTable"></table></div>
+          </div>
+
+          <!-- Salaries — every transaction in the payroll category, by counterparty × month -->
+          <div class="data-card">
+            <h3 data-i18n="dash.sal.title">Зарплаты</h3>
+            <p class="sub" data-i18n="dash.sal.subtitle">По контрагентам · по месяцам</p>
+            <div class="data-scroll"><table class="pivot" id="salTable"></table></div>
+          </div>
+        </div>
+
+        <div id="dashEmpty" class="empty" style="display:none">
+          <div class="empty-emoji">📊</div>
+          <h3 data-i18n="dash.empty.title">Пока нет данных</h3>
+          <p data-i18n="dash.empty.text">Добавьте транзакции, чтобы увидеть дашборд.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ SETTINGS › DICTIONARIES ============
+         One list at a time, chosen with the segmented switcher. All three sections share the
+         same anatomy — header (title · count · ＋) / add form / search / list — so a single
+         engine in the script drives them; only the account section adds extra fields. -->
+    <section class="view" id="view-settings" hidden>
+      <div class="col">
+        <div class="set-head">
+          <button class="set-back" id="settingsBackBtn" type="button"
+                  data-i18n-title="set.back" title="Назад" data-i18n-aria="set.back" aria-label="Назад">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
+          </button>
+          <h1 class="title gradient" data-i18n="set.title">Настройки</h1>
+        </div>
+
+        <nav class="subtabs" id="setTabs">
+          <button class="subtab active" type="button" data-set="acc" data-i18n="set.acc.title">Счета</button>
+          <button class="subtab" type="button" data-set="cat" data-i18n="set.cat.title">Категории</button>
+          <button class="subtab" type="button" data-set="cp" data-i18n="set.cp.title">Контрагенты</button>
+          <button class="subtab" type="button" data-set="pv" data-i18n="set.pv.title">Поставщики</button>
+        </nav>
+
+        <!-- Accounts -->
+        <div class="card dict-card dict-acc" id="setPanel-acc">
+          <div class="dict-head">
+            <h3 data-i18n="set.acc.title">Счета</h3>
+            <span class="dict-count" id="accCount">0</span>
+            <button class="dict-add-toggle" id="accAddToggle" type="button" aria-expanded="false"
+                    data-i18n-title="set.add" title="Добавить" data-i18n-aria="set.add" aria-label="Добавить">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            </button>
+          </div>
+          <!-- Name on its own line, then currency + opening balance + submit. -->
+          <div class="dict-form dict-form-acc" id="accAddForm" hidden>
+            <input id="accNew" class="dict-add-name" type="text" maxlength="15" autocomplete="off"
+                   data-i18n-ph="set.ph.acc" placeholder="Новый счёт" />
+            <select id="accNewCur" data-i18n-title="field.currency" title="Валюта">
+              <option value="USDT">USDT</option>
+              <option value="USD">USD</option>
+              <option value="EUR">EUR</option>
+            </select>
+            <input id="accNewBal" class="dict-add-bal" type="number" inputmode="decimal" step="0.01"
+                   autocomplete="off" data-i18n-ph="set.ph.accbal" placeholder="0.00" />
+            <button class="dict-submit" id="accAddBtn" type="button" data-i18n="set.add">Добавить</button>
+            <p class="hint field-hint" data-i18n="set.acc.hint">Баланс = начальный остаток в валюте счёта плюс движение средств по нему.</p>
+          </div>
+          <div class="dict-search" id="accSearchWrap" hidden>
+            <input id="accSearch" type="search" autocomplete="off" data-i18n-ph="set.ph.search" placeholder="Поиск…" />
+          </div>
+          <ul class="dict-list" id="accList"></ul>
+        </div>
+
+        <!-- Categories — the user's own only. The seeded ones are shared by everybody and
+             aren't theirs to rename or delete, so they're not listed here at all. -->
+        <div class="card dict-card dict-cat" id="setPanel-cat" hidden>
+          <div class="dict-head">
+            <h3 data-i18n="set.cat.title">Категории</h3>
+            <span class="dict-count" id="catCount">0</span>
+            <button class="dict-add-toggle" id="catAddToggle" type="button" aria-expanded="false"
+                    data-i18n-title="set.add" title="Добавить" data-i18n-aria="set.add" aria-label="Добавить">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            </button>
+          </div>
+          <div class="dict-form dict-form-cat" id="catAddForm" hidden>
+            <input id="catNew" type="text" maxlength="25" autocomplete="off"
+                   data-i18n-ph="set.ph.cat" placeholder="Новая категория" />
+            <button class="dict-submit" id="catAddBtn" type="button" data-i18n="set.add">Добавить</button>
+            <p class="hint field-hint" data-i18n="set.cat.hint">Свои категории доступны для любого типа транзакции. Стандартные изменить нельзя.</p>
+          </div>
+          <div class="dict-search" id="catSearchWrap" hidden>
+            <input id="catSearch" type="search" autocomplete="off" data-i18n-ph="set.ph.search" placeholder="Поиск…" />
+          </div>
+          <ul class="dict-list" id="catList"></ul>
+        </div>
+
+        <!-- Counterparties -->
+        <div class="card dict-card dict-cp" id="setPanel-cp" hidden>
+          <div class="dict-head">
+            <h3 data-i18n="set.cp.title">Контрагенты</h3>
+            <span class="dict-count" id="cpCount">0</span>
+            <button class="dict-add-toggle" id="cpAddToggle" type="button" aria-expanded="false"
+                    data-i18n-title="set.add" title="Добавить" data-i18n-aria="set.add" aria-label="Добавить">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            </button>
+          </div>
+          <div class="dict-form" id="cpAddForm" hidden>
+            <input id="cpNew" type="text" maxlength="30" autocomplete="off"
+                   data-i18n-ph="set.ph.cp" placeholder="Новый контрагент" />
+            <button class="dict-submit" id="cpAddBtn" type="button" data-i18n="set.add">Добавить</button>
+          </div>
+          <div class="dict-search" id="cpSearchWrap" hidden>
+            <input id="cpSearch" type="search" autocomplete="off" data-i18n-ph="set.ph.search" placeholder="Поиск…" />
+          </div>
+          <ul class="dict-list" id="cpList"></ul>
+        </div>
+
+        <!-- Providers -->
+        <div class="card dict-card dict-pv" id="setPanel-pv" hidden>
+          <div class="dict-head">
+            <h3 data-i18n="set.pv.title">Поставщики</h3>
+            <span class="dict-count" id="pvCount">0</span>
+            <button class="dict-add-toggle" id="pvAddToggle" type="button" aria-expanded="false"
+                    data-i18n-title="set.add" title="Добавить" data-i18n-aria="set.add" aria-label="Добавить">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            </button>
+          </div>
+          <div class="dict-form" id="pvAddForm" hidden>
+            <input id="pvNew" type="text" maxlength="30" autocomplete="off"
+                   data-i18n-ph="set.ph.pv" placeholder="Новый поставщик" />
+            <button class="dict-submit" id="pvAddBtn" type="button" data-i18n="set.add">Добавить</button>
+          </div>
+          <div class="dict-search" id="pvSearchWrap" hidden>
+            <input id="pvSearch" type="search" autocomplete="off" data-i18n-ph="set.ph.search" placeholder="Поиск…" />
+          </div>
+          <ul class="dict-list" id="pvList"></ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    /* ---------------- Telegram bootstrap (with standalone fallback) ---------------- */
+    const tg = (window.Telegram && window.Telegram.WebApp) || {
+      ready(){}, expand(){}, onEvent(){}, themeParams:{}, colorScheme:'dark',
+      showAlert(m){ alert(m); }, showConfirm(m,cb){ cb(confirm(m)); }, isFullscreen:false,
+      platform:'unknown', safeAreaInset:{top:0,bottom:0,left:0,right:0},
+      contentSafeAreaInset:{top:0,bottom:0,left:0,right:0},
+      HapticFeedback:{ notificationOccurred(){}, impactOccurred(){} }
+    };
+    tg.ready(); tg.expand();
+
+    /* ---------------- Fullscreen: safe areas + which platforms it suits ----------------
+       A Mini App can be launched straight into fullscreen (the "open app" / Main Mini App
+       entry point sets tgWebAppFullscreen), and that changes the rules of the page:
+         · mobile — Telegram's ⋯ / ✕ controls and the status bar float OVER our content, so
+           the page must pad itself by the insets Telegram reports (safeAreaInset = device
+           notch/status bar, contentSafeAreaInset = room taken by Telegram's own controls);
+         · desktop — the client drops the Mini App window's frame, so it appears wherever the
+           client put it with no title bar left to drag: the window can't be moved. Fullscreen
+           there is a trap, so a launch-time fullscreen is dropped (the top-bar toggle still
+           lets you opt in deliberately).
+       Both inset objects and the fullscreen API arrived in Bot API 8.0; older clients report
+       nothing and requestFullscreen/exitFullscreen THROW, hence the fallbacks and try/catch. */
+    const MOBILE_PLATFORMS = ['android', 'android_x', 'ios'];
+    function isTouchDevice(){
+      try { return window.matchMedia('(hover:none) and (pointer:coarse)').matches; }
+      catch(e){ return false; }
+    }
+    // Desktop = not a known mobile client AND not a touch screen, so an unknown platform on a
+    // phone keeps its fullscreen rather than being forced out of it.
+    function isDesktopLike(){
+      return MOBILE_PLATFORMS.indexOf(String(tg.platform || '').toLowerCase()) === -1 && !isTouchDevice();
+    }
+    // Telegram reports insets only from Bot API 8.0 on. When a client stays silent the top
+    // fallback (--inset-top's 3.5rem default in the stylesheet) still clears its controls.
+    const FS_TOP_FALLBACK_PX = 56;
+    function applyInsets(){
+      const s = document.documentElement.style;
+      if (!inFullscreen()){                  // normal launch → Telegram's chrome is outside the webview
+        ['top','bottom','left','right'].forEach(k => s.removeProperty('--inset-' + k));
+        return;
+      }
+      const sa = tg.safeAreaInset || {}, ca = tg.contentSafeAreaInset || {};
+      const num = (v) => Number(v) || 0;
+      // The two insets stack: contentSafeAreaInset measures Telegram's own controls, which sit
+      // BELOW the device notch/status bar that safeAreaInset covers. (If a client ever reported
+      // the content inset from the window edge instead, the top gap would look too tall — the
+      // fix would be dropping `sa.top` from this one sum.)
+      const top = num(sa.top) + num(ca.top);
+      s.setProperty('--inset-top', Math.max(top, FS_TOP_FALLBACK_PX) + 'px');
+      s.setProperty('--inset-bottom', (num(sa.bottom) + num(ca.bottom)) + 'px');
+      s.setProperty('--inset-left', (num(sa.left) + num(ca.left)) + 'px');
+      s.setProperty('--inset-right', (num(sa.right) + num(ca.right)) + 'px');
+    }
+    // Drop a launch-time fullscreen on desktop, where it leaves an unmovable window. The
+    // client only clears isFullscreen once it answers with fullscreenChanged, so the pending
+    // flag keeps the page from painting fullscreen padding it is about to lose.
+    let fsExitPending = false;
+    function normalizeFullscreen(){
+      if (!tg.isFullscreen || !isDesktopLike()) return;
+      try { tg.exitFullscreen(); fsExitPending = true; }
+      catch(e){ console.warn('[App] exitFullscreen unsupported by this client', e); }
+    }
+    function inFullscreen(){ return !!tg.isFullscreen && !fsExitPending; }
+
+    /* ---------------- i18n (Russian only) ----------------
+       The app ships in a single language, so this is a flat key→string map rather
+       than a per-language dictionary. Reference data (types / categories /
+       counterparties / providers) carries its own Russian `name` from the API. */
+    const dict = {
+        'tab.new':'Добавить', 'tab.list':'Транзакции',
+        'form.title':'Новая транзакция', 'form.subtitle':'Добавьте запись в ваш журнал.',
+        'form.edit.title':'Редактировать транзакцию', 'form.edit.subtitle':'Обновите эту запись.',
+        'btn.save':'Сохранить изменения', 'btn.cancel':'Отменить', 'toast.updated':'Транзакция обновлена',
+        'field.date':'Дата', 'field.total':'Сумма', 'field.currency':'Валюта', 'field.type':'Тип',
+        'field.category':'Категория', 'field.counterparty':'Контрагент', 'field.comment':'Комментарий',
+        'field.provider':'Поставщик', 'field.account':'Счёт',
+        // A transfer names both ends; every other type books onto the single 'field.account'.
+        'field.account.from':'Со счёта', 'field.account.to':'На счёт',
+        'ph.date':'📅 Выберите дату', 'ph.comment':'За что?', 'ph.select':'Выберите…',
+        'btn.create':'Создать транзакцию',
+        'toast.created':'Транзакция добавлена',
+        'toast.error':'Произошла ошибка',
+        'alert.missing':'Пожалуйста, заполните:',
+        'alert.sameaccount':'Счёт списания и счёт зачисления должны отличаться.',
+        'alert.noaccounts':'Сначала создайте счёт — транзакция всегда принадлежит счёту.',
+        'warn.debt.repaid':'Возвращено больше, чем взято в долг у этого контрагента, на',
+        'warn.debt.collected':'Получено больше, чем выдано в долг этому контрагенту, на',
+        'hint.config':'⚠ Укажите API_BASE в config.js',
+        'alert.nofullscreen':'Эта версия Telegram не поддерживает полноэкранный режим.',
+        'table.title':'Транзакции', 'table.subtitle':'Всё, что вы добавили.',
+        'th.date':'Дата', 'th.total':'Сумма', 'th.currency':'Валюта', 'th.type':'Тип',
+        'th.category':'Категория', 'th.counterparty':'Контрагент', 'th.comment':'Комментарий',
+        'th.provider':'Поставщик', 'th.account':'Счёт',
+        'empty.title':'Пока нет транзакций', 'empty.text':'Создайте первую на вкладке «Добавить».',
+        'empty.acc.title':'На этом счёте нет транзакций',
+        'empty.acc.text':'Добавьте транзакцию или выберите другой счёт вверху.',
+        'cfg.title':'Бэкенд не настроен', 'cfg.text':'Укажите API_BASE в config.js, чтобы загрузить транзакции.',
+        'err.title':'Не удалось загрузить транзакции', 'err.text':'Проверьте, что бэкенд запущен и доступен.',
+        'btn.clear':'Очистить всё', 'confirm.clear':'Удалить все транзакции?',
+        'confirm.clear.all':'Удалить ВСЕ транзакции — со всех счетов, а не только с выбранного?',
+        'toast.cleared':'Очищено',
+        'tab.dash':'Дашборд',
+        'dash.f.currency':'Валюта', 'dash.f.from':'С', 'dash.f.to':'По', 'dash.f.cats':'Категории',
+        'dash.ph.from':'📅 Дата с', 'dash.ph.to':'📅 Дата по',
+        'dash.kpi.income':'Доходы', 'dash.kpi.expenses':'Расходы', 'dash.kpi.net':'Чистая прибыль',
+        'dash.kpi.cash':'Остаток средств',
+        'dash.kpi.receivable':'Нам должны', 'dash.kpi.payable':'Мы должны',
+        'dash.kpi.invest':'Инвестиции', 'dash.kpi.dividend':'Дивиденды',
+        'dash.income':'Доходы', 'dash.expenses':'Расходы',
+        'dash.c.pnl':'Прибыли и убытки', 'dash.c.pnl.sub':'Доходы · расходы · прибыль',
+        'dash.c.net':'Чистая прибыль', 'dash.c.net.sub':'Динамика по месяцам',
+        'dash.c.cash':'Остаток средств', 'dash.c.cash.sub':'Нарастающим итогом',
+        'dash.c.exp':'Структура расходов', 'dash.c.exp.sub':'По категориям',
+        'dash.c.topcp':'Топ контрагентов по расходам', 'dash.c.topcp.sub':'Наибольшие траты',
+        'dash.pnl.rev':'Доходы', 'dash.pnl.cost':'Расходы', 'dash.pnl.net':'Прибыль', 'dash.pnl.margin':'Маржа',
+        'dash.pnl.title':'Отчёт о прибылях и убытках', 'dash.pnl.subtitle':'По месяцам',
+        'dash.pnl.profit':'Прибыль', 'dash.pnl.income':'Доходы', 'dash.pnl.expenses':'Расходы', 'dash.pnl.total':'Итого',
+        'dash.pnl.netincome':'Чистая прибыль', 'dash.pnl.dividends':'Дивиденды', 'dash.pnl.marginpct':'Маржа %',
+        'dash.pnl.none':'Нет доходов или расходов за период.',
+        'dash.cf.title':'Отчёт о движении денежных средств', 'dash.cf.subtitle':'По месяцам · прямой метод',
+        'dash.cf.op':'Операционная деятельность', 'dash.cf.inv':'Инвестиционная деятельность', 'dash.cf.fin':'Финансовая деятельность',
+        'dash.cf.net':'Чистый денежный поток', 'dash.cf.cum':'Нарастающим итогом', 'dash.cf.none':'Нет движения средств за период.',
+        'tbl.f.type':'Тип', 'tbl.f.cat':'Категория', 'tbl.f.cur':'Валюта', 'tbl.f.all':'Все',
+        'tbl.f.clear':'Сбросить фильтры', 'tbl.f.toggle':'Фильтры',
+        'tbl.total':'Итого', 'tbl.noresults':'Нет транзакций по этим фильтрам.',
+        'dash.cp.title':'Долги', 'dash.cp.subtitle':'По контрагентам',
+        'dash.cp.counterparty':'Контрагент', 'dash.cp.payable':'Мы должны', 'dash.cp.receivable':'Нам должны',
+        'dash.cp.none':'Нет открытых долгов.', 'dash.nocp':'Без контрагента',
+        'dash.empty.title':'Пока нет данных', 'dash.empty.text':'Добавьте транзакции, чтобы увидеть дашборд.',
+        'dash.uncat':'Без категории', 'dash.none':'Нет данных',
+        'dash.sal.title':'Зарплаты', 'dash.sal.subtitle':'По контрагентам · по месяцам',
+        'dash.sal.who':'Контрагент', 'dash.sal.none':'Нет зарплатных транзакций за период.',
+        'theme':'Тема',
+        // Settings › dictionaries
+        'btn.settings':'Настройки',
+        'set.title':'Настройки',
+        'set.cp.title':'Контрагенты', 'set.pv.title':'Поставщики',
+        'set.ph.cp':'Новый контрагент', 'set.ph.pv':'Новый поставщик',
+        // Categories: this section lists only the user's own — the seeded ones are shared
+        // by everybody and aren't theirs to change, so they don't appear here at all.
+        'set.cat.title':'Категории', 'set.ph.cat':'Новая категория',
+        'set.cat.hint':'Свои категории доступны для любого типа транзакции.',
+        'set.cat.empty':'Пока нет своих категорий. Добавьте первую выше.',
+        'set.cat.added':'Категория добавлена', 'set.cat.deleted':'Категория удалена',
+        'set.confirm.cat':'Удалить категорию «%s»?',
+        'set.ph.search':'Поиск…', 'set.nomatch':'Ничего не найдено',
+        'set.save':'Сохранить', 'set.rename':'Переименовать', 'set.renamed':'Название изменено',
+        'set.rename.failed':'Не удалось изменить название',
+        'set.add':'Добавить', 'set.back':'Назад',
+        'set.cp.empty':'Пока нет контрагентов. Добавьте первого выше.',
+        'set.pv.empty':'Пока нет поставщиков. Добавьте первого выше.',
+        'set.cp.added':'Контрагент добавлен', 'set.pv.added':'Поставщик добавлен',
+        'set.cp.deleted':'Контрагент удалён', 'set.pv.deleted':'Поставщик удалён',
+        'set.confirm.cp':'Удалить контрагента «%s»?', 'set.confirm.pv':'Удалить поставщика «%s»?',
+        'set.dup':'Такая запись уже существует',
+        'set.inuse':'Не удалось удалить — возможно, запись уже используется',
+        // Accounts
+        'acc.all':'Все счета', 'acc.empty':'Счетов пока нет', 'acc.manage':'Управление счетами',
+        'set.acc.title':'Счета', 'set.ph.acc':'Новый счёт', 'set.ph.accbal':'0.00',
+        'set.acc.hint':'Баланс = начальный остаток в валюте счёта плюс движение средств по нему.',
+        'set.acc.empty':'Пока нет счетов. Добавьте первый выше.',
+        'set.acc.added':'Счёт добавлен', 'set.acc.deleted':'Счёт удалён',
+        'set.confirm.acc':'Удалить счёт «%s»? Его транзакции останутся без счёта.'
+      };
+    const t = (k) => dict[k] || k;
+    const locale = () => 'ru-RU';
+
+    function applyI18n(){
+      document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+      document.querySelectorAll('[data-i18n-ph]').forEach(el => { el.placeholder = t(el.dataset.i18nPh); });
+      document.querySelectorAll('[data-i18n-title]').forEach(el => { el.title = t(el.dataset.i18nTitle); });
+      // Icon-only buttons carry their name in aria-label, so it needs localizing too.
+      document.querySelectorAll('[data-i18n-aria]').forEach(el => { el.setAttribute('aria-label', t(el.dataset.i18nAria)); });
+      document.documentElement.lang = 'ru';
+      refillSelects();
+      renderTable();
+      try { dashOnData(); } catch(e){}
+      try { syncAllDateFields(); } catch(e){}
+      if (window.AppUI) AppUI.refreshAll();
+    }
+
+    /* ---------------- Theme (FORCED LIGHT — ignores Telegram's theme) ----------------
+       White surfaces, orange primary, purple secondary. These are the same custom
+       properties the stylesheet declares in :root — re-set here so the palette wins
+       over anything Telegram injects, and so the native header matches the page. */
+    function applyTheme(){
+      document.body.setAttribute('data-scheme', 'light');
+
+      const bg = '#faf8fc';
+      const s = document.documentElement.style;
+      s.setProperty('--bg', bg);
+      s.setProperty('--text', '#1b1425');
+      s.setProperty('--hint', '#6b6478');
+      s.setProperty('--button', '#f97316');
+      s.setProperty('--button_text', '#ffffff');
+      s.setProperty('--secondary_bg', '#ffffff');
+      s.setProperty('--card_bg', '#ffffff');
+      s.setProperty('--border', 'rgba(27,20,37,.10)');
+      s.setProperty('--field_bg', '#ffffff');
+      s.setProperty('--field_border', 'rgba(27,20,37,.14)');
+      s.setProperty('--field_focus', 'rgba(249,115,22,.20)');
+      s.setProperty('--hover', 'rgba(168,85,247,.07)');
+
+      if (typeof tg.setBackgroundColor === 'function') { try { tg.setBackgroundColor(bg); } catch(e){} }
+      if (typeof tg.setHeaderColor === 'function')     { try { tg.setHeaderColor(bg); } catch(e){} }
+    }
+    applyTheme();
+    if (typeof tg.onEvent === 'function') tg.onEvent('themeChanged', applyTheme);
+
+    /* ---------------- Fullscreen toggle (desktop only) ---------------- */
+    const fsBtn = document.getElementById('fsBtn');
+    const fsExpand = document.getElementById('fsExpand');
+    const fsCompress = document.getElementById('fsCompress');
+    function updateFsIcon(){
+      const on = inFullscreen();
+      fsExpand.style.display = on ? 'none' : 'block';
+      fsCompress.style.display = on ? 'block' : 'none';
+      // Gates the safe-area padding (see body.is-fullscreen in the stylesheet).
+      document.body.classList.toggle('is-fullscreen', on);
+      applyInsets();
+    }
+    fsBtn.onclick = () => {
+      // Present on every SDK build but throws below Bot API 8.0, so the guard is a try/catch.
+      try { if (tg.isFullscreen) tg.exitFullscreen(); else tg.requestFullscreen(); }
+      catch(e){
+        console.warn('[App] fullscreen unsupported by this client', e);
+        notify(t('alert.nofullscreen'));
+      }
+    };
+    if (typeof tg.onEvent === 'function'){
+      tg.onEvent('fullscreenChanged', () => { fsExitPending = false; updateFsIcon(); });
+      // The insets change on their own: rotation, keyboard, and Telegram moving its controls.
+      tg.onEvent('safeAreaChanged', applyInsets);
+      tg.onEvent('contentSafeAreaChanged', applyInsets);
+      tg.onEvent('viewportChanged', applyInsets);
+      // Payload is { error: 'UNSUPPORTED' | 'ALREADY_FULLSCREEN' }.
+      tg.onEvent('fullscreenFailed', (e) => {
+        const err = e && e.error;
+        console.warn('[App] fullscreenFailed', err);
+        if (err === 'UNSUPPORTED') notify(t('alert.nofullscreen'));
+        updateFsIcon();
+      });
+    }
+    normalizeFullscreen();   // desktop: don't stay in an unmovable fullscreen window
+    updateFsIcon();
+
+    /* ---------------- Helpers ---------------- */
+    const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    const escapeHtml = esc;
+    function haptic(type){ try { tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(type); } catch(e){} }
+    function notify(msg){ if (typeof tg.showAlert === 'function') tg.showAlert(msg); else alert(msg); }
+    function confirmThen(msg, cb){
+      if (typeof tg.showConfirm === 'function') tg.showConfirm(msg, ok => { if (ok) cb(); });
+      else if (confirm(msg)) cb();
+    }
+    let toastTimer;
+    function showToast(msg){
+      const el = document.getElementById('toast');
+      el.textContent = msg; el.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+    }
+    // European number format everywhere: '.' groups thousands, ',' is the decimal mark
+    // (10000 -> "10.000,00"). Fixed 'de-DE' locale so the style is identical in EN and UK.
+    function euNum(n, dec){
+      const d = dec == null ? 2 : dec;
+      try { return new Intl.NumberFormat('de-DE', { minimumFractionDigits:d, maximumFractionDigits:d }).format(Number(n) || 0); }
+      catch(e){ return (Number(n) || 0).toFixed(d).replace('.', ','); }
+    }
+    function fmtNum(n){ return euNum(n, 2); }
+    function fmtDate(iso){
+      const d = new Date(iso + 'T00:00:00');
+      if (isNaN(d)) return iso;
+      try { return new Intl.DateTimeFormat(locale(), { day:'2-digit', month:'short', year:'numeric' }).format(d); }
+      catch(e){ return iso; }
+    }
+
+    /* ---------------- View switching (no page reload) ---------------- */
+    const views = {
+      new:      document.getElementById('view-new'),
+      table:    document.getElementById('view-table'),
+      dash:     document.getElementById('view-dash'),
+      settings: document.getElementById('view-settings')
+    };
+    const tabBtns = Array.from(document.querySelectorAll('.tab'));
+    // Settings is reachable only from the gear button, so it has no tab — when it's
+    // open every tab is inactive, and the previous view is remembered for "Back".
+    let lastMainView = 'new';
+    function showView(name){
+      Object.keys(views).forEach(k => { views[k].hidden = (k !== name); });
+      tabBtns.forEach(b => b.classList.toggle('active', b.dataset.view === name));
+      if (name !== 'settings') lastMainView = name;
+      if (name === 'table') reconcileTable();
+      if (name === 'dash'){ reconcileTable(); dashShow(); }
+      if (name === 'settings'){ renderDicts(); loadOwnCategories(); }
+    }
+    tabBtns.forEach(b => { b.onclick = () => showView(b.dataset.view); });
+    document.getElementById('settingsBtn').onclick = () => { showView('settings'); views.settings.scrollTop = 0; };
+    document.getElementById('settingsBackBtn').onclick = () => showView(lastMainView);
+
+    /* ---------------- Accounts: top-bar picker = app-wide VIEW scope ----------------
+       `activeAcc` decides what you're looking at and nothing else: an account id filters
+       the Transactions list and the Dashboard to that account and names whose balance the
+       picker shows; '' means "all accounts". It has no part in creating or editing a
+       transaction — the form carries its own account cells — so changing it mid-entry is
+       always safe. The choice is persisted per user and survives reloads. */
+    let ACCS = App.cachedAccounts() || [];
+    let activeAcc = App.getActiveAccount();   // null = never chosen · '' = all · id = one
+    const accSwitch  = document.getElementById('accSwitch');
+    const accTrigger = document.getElementById('accTrigger');
+    const accMenu    = document.getElementById('accMenu');
+    const accNameEl  = document.getElementById('accName');
+
+    // Account of a transaction — the nested object when the API sent it, flat id otherwise.
+    // The API calls the pair account_from / account_to (TransactionRead); for everything but
+    // a transfer only account_from is set, and it simply means "the account this is booked on".
+    function txAccId(tx){ return (tx.account_from && tx.account_from.id != null) ? tx.account_from.id : tx.account_from_id; }
+    // The DESTINATION account — only a transfer has one; it's the account the money lands on
+    // (`account_from` is then the one it leaves). Undefined everywhere else.
+    function txToAccId(tx){ return (tx.account_to && tx.account_to.id != null) ? tx.account_to.id : tx.account_to_id; }
+    // Does this transaction touch the given account, at either end?
+    function txInAcc(tx, id){
+      return String(txAccId(tx)) === String(id) || String(txToAccId(tx)) === String(id);
+    }
+    function accById(id){ return ACCS.filter(a => String(a.id) === String(id))[0] || null; }
+    // The transactions in scope. Every view derives its rows from here, so switching
+    // accounts re-scopes the whole app at once. A transfer belongs to BOTH its accounts,
+    // so it stays visible whichever end you're looking at.
+    function scopedTX(){
+      if (!activeAcc) return TX;
+      return TX.filter(tx => txInAcc(tx, activeAcc));
+    }
+    function setStoredAcc(v){ activeAcc = v; App.setActiveAccount(v); }
+
+    // The account's own currency — what its opening balance is denominated in, and the unit
+    // its balance is reported in. Falls back to the app's base currency for an account stored
+    // before accounts had a currency.
+    function accCur(acc){ return (acc && acc.currency) || 'USDT'; }
+    // Cash actually moved on an account, in that account's currency. Each transaction is
+    // converted with the historical rate for its own date (see txAbsIn). Accrued-only rows
+    // moved no cash yet → txCashFor() returns '' and they're skipped. A transfer counts on
+    // both accounts, with the direction each of them saw it from.
+    function accCash(acc){
+      const cur = accCur(acc);
+      return TX.reduce((s, tx) => {
+        if (!txInAcc(tx, acc.id)) return s;
+        const dir = txCashFor(tx, acc.id);
+        if (!dir) return s;
+        return s + (dir === 'in' ? 1 : -1) * txAbsIn(tx, cur);
+      }, 0);
+    }
+    function accBalance(acc){ return (Number(acc.balance) || 0) + accCash(acc); }
+    // Bare signed number — for rows that state the currency separately (Settings' chip).
+    function accBalanceNum(acc){
+      const v = accBalance(acc);
+      return (v < 0 ? '−' : '') + fmtNum(Math.abs(v));
+    }
+    // With the unit attached — for the picker, where nothing else names the currency.
+    function accBalanceStr(acc){ return accBalanceNum(acc) + ' ' + curSym(accCur(acc)); }
+
+    const ACC_CHECK = '<svg class="acc-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+    function accRow(val, name, bal, neg){
+      const on = String(val) === String(activeAcc || '') ? ' selected' : '';
+      return `<div class="acc-opt${on}" data-acc="${esc(val)}" role="option">
+          <span class="acc-opt-txt">${esc(name)}</span>
+          ${bal ? `<span class="acc-opt-bal${neg ? ' neg' : ''}">${esc(bal)}</span>` : ''}
+          ${ACC_CHECK}
+        </div>`;
+    }
+    function renderAccSwitch(){
+      const active = activeAcc ? accById(activeAcc) : null;
+      accNameEl.textContent = active ? App.pickName(active) : t('acc.all');
+      const rows = ACCS.slice().sort(byLocaleName)
+        .map(a => accRow(String(a.id), App.pickName(a), accBalanceStr(a), accBalance(a) < 0));
+      accMenu.innerHTML =
+        accRow('', t('acc.all'), '', false) +
+        (rows.length ? rows.join('') : `<div class="acc-empty">${esc(t('acc.empty'))}</div>`) +
+        `<div class="acc-sep"></div>
+         <div class="acc-opt acc-manage" data-manage="1">
+           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+           <span class="acc-opt-txt">${esc(t('acc.manage'))}</span>
+         </div>`;
+    }
+    function accMenuOpen(open){
+      accMenu.hidden = !open;
+      accSwitch.classList.toggle('open', open);
+      accTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    accTrigger.onclick = () => {
+      const willOpen = accMenu.hidden;
+      if (willOpen) renderAccSwitch();   // balances change with every transaction
+      accMenuOpen(willOpen);
+    };
+    document.addEventListener('click', (e) => {
+      if (!accMenu.hidden && !accSwitch.contains(e.target)) accMenuOpen(false);
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') accMenuOpen(false); });
+    accMenu.addEventListener('click', (e) => {
+      accMenuOpen(false);
+      // "Manage accounts" → Settings, already on the Accounts section.
+      if (e.target.closest('[data-manage]')){
+        setTab = 'acc';
+        showView('settings'); views.settings.scrollTop = 0;
+        return;
+      }
+      const opt = e.target.closest('[data-acc]');
+      if (opt) selectAccount(opt.dataset.acc);
+    });
+    function selectAccount(id){
+      const next = id == null ? '' : String(id);
+      if (next === String(activeAcc || '')) return;
+      setStoredAcc(next);
+      renderAccSwitch();
+      renderTable();       // re-scopes list + badge, and repaints the dashboard if open
+      // Deliberately does NOT touch the form: the picker only changes what you're looking
+      // at, never where a transaction lands. Switching it mid-entry or mid-edit is safe.
+      haptic('success');
+    }
+
+    /* ---------------- Dropdowns (Type / Category / Counterparty / Provider) ---------------- */
+    const typeSel = document.getElementById('type');
+    const catSel  = document.getElementById('category');
+    const cpSel   = document.getElementById('counterparty');
+    const pvSel   = document.getElementById('provider');
+    // CATS is the type-scoped list behind the form's dropdown (refetched per type).
+    // OWN_CATS is every category the user created, for the Settings section — a different
+    // question with a different answer, so it's kept separate rather than derived.
+    let TYPES = [], CATS = [], CPS = [], PVS = [], OWN_CATS = [];
+
+    // `keepOrder` leaves the list in the order the API sent it. Types are a fixed,
+    // meaningful sequence (income → expense → transfer → the four debt movements), so
+    // sorting them alphabetically would scramble it; every other list sorts by name.
+    function fillSelect(sel, items, keepOrder){
+      const ph = `<option value="" disabled selected>${esc(t('ph.select'))}</option>`;
+      const list = keepOrder ? items.slice() : items.slice().sort(byLocaleName);
+      sel.innerHTML = ph + list.map(o => `<option value="${esc(o.id)}">${esc(App.pickName(o))}</option>`).join('');
+    }
+    // Comparator: order two reference objects by name, locale-aware so Cyrillic sorts
+    // correctly. Used by every name dropdown (type / category / counterparty /
+    // provider + their filters).
+    function byLocaleName(a, b){
+      return App.pickName(a).localeCompare(App.pickName(b), locale(), { sensitivity:'base' });
+    }
+    function refillSelects(){
+      if (!typeSel) return;
+      fillSelect(typeSel, TYPES, true); fillSelect(catSel, CATS);
+      fillSelect(cpSel, CPS); fillSelect(pvSel, PVS);
+      fillAccountSelects(); syncAccountFields();
+      if (window.AppUI) AppUI.refreshAll();  // reflect new options in custom selects
+    }
+
+    /* ---------------- Account cells on the form ----------------
+       The form names its own accounts and is fully independent of the top-bar picker: that
+       picker is a VIEW control (which rows am I looking at, what are the balances) and has
+       no say in where a transaction lands. So the scope can be changed while writing or
+       editing a row without moving anything, and a transfer can name two accounts at once.
+       The only carry-over is within the form itself: after a successful create the chosen
+       account stays selected, since the next row is usually on the same one. */
+    const accSel     = document.getElementById('account');
+    const accToSel   = document.getElementById('accountTo');
+    const accountRow = document.getElementById('accountRow');
+    const accToCell  = document.getElementById('accountToCell');
+    const accFromLbl = document.getElementById('accountFromLabel');
+
+    // Select `id` when it still names a real account, otherwise fall back to "Выберите…".
+    function setAccValue(sel, id){
+      if (id !== '' && id != null && accById(id)) sel.value = String(id);
+      else sel.selectedIndex = 0;
+    }
+    function fillAccountSelects(){
+      if (!accSel) return;
+      // Both cells list every account; the same-account guard in createBtn keeps a transfer
+      // from pointing at itself (blanking the option would fight the user mid-choice).
+      const from = accSel.value, to = accToSel.value;
+      fillSelect(accSel, ACCS); fillSelect(accToSel, ACCS);
+      setAccValue(accSel, from); setAccValue(accToSel, to);
+    }
+    // Code of the type currently chosen on the form ('' when none is, or it's unknown).
+    function formTypeCode(){
+      const ty = TYPES.find(x => String(x.id) === String(typeSel.value));
+      return ty ? typeCodeOf(refStr(ty)) : '';
+    }
+    // Show one account cell, or two for a transfer (source + destination side by side).
+    function syncAccountFields(){
+      if (!accountRow) return;
+      const transfer = formTypeCode() === 'transfer';
+      accountRow.classList.toggle('row2', transfer);
+      accToCell.hidden = !transfer;
+      // Set the key, not the text: applyI18n() re-reads data-i18n and would undo a plain
+      // textContent swap. "Счёт" becomes "Со счёта" once there's a second one to tell it from.
+      accFromLbl.dataset.i18n = transfer ? 'field.account.from' : 'field.account';
+      accFromLbl.textContent = t(accFromLbl.dataset.i18n);
+      if (!transfer) accToSel.selectedIndex = 0;   // never submit a stale hidden destination
+      if (window.AppUI) AppUI.refreshAll();
+    }
+    async function loadOptions(){
+      if (!App.configured){ const el = document.getElementById('themeHint'); if (el) el.textContent = t('hint.config'); return; }
+      try {
+        // Categories are type-scoped, so they're NOT loaded here — they're fetched
+        // on demand once a type is chosen (see loadCategoriesForType). Start empty.
+        const [types, cps, pvs, accs] = await Promise.all([
+          App.getTransactionTypes(), App.getCounterparties(), App.getProviders(),
+          App.getAccounts()
+        ]);
+        TYPES = types || []; CPS = cps || []; PVS = pvs || []; CATS = [];
+        ACCS = accs || [];
+        // Reconcile the remembered scope against the accounts that actually exist now:
+        // never chosen → adopt the first account; a since-deleted one → first account (or
+        // "all" if none are left). An explicit "all accounts" ('') is always respected.
+        if (ACCS.length){
+          if (activeAcc == null || (activeAcc && !accById(activeAcc))) setStoredAcc(String(ACCS[0].id));
+        } else if (activeAcc){
+          setStoredAcc('');
+        }
+        renderAccSwitch();
+        refillSelects();
+        renderTable();   // the scope may have changed → re-filter the list + badge
+      } catch(e){ console.error(e); showToast(t('toast.error')); }
+      loadOwnCategories();
+    }
+
+    // The user's own categories, for the Settings section. Fetched on its own rather than
+    // inside the Promise.all above: it feeds one settings panel, and a failure there must
+    // not take down the types / counterparties / providers / accounts the app can't run
+    // without. Re-fetched whenever Settings is opened, so a second device's edits show up.
+    async function loadOwnCategories(){
+      if (!App.configured) return;
+      try {
+        OWN_CATS = (await App.getOwnCategories()) || [];
+        renderDict('cat');
+      } catch(e){ console.warn('[App] own categories unavailable', e); }
+    }
+
+    // Fetch the categories belonging to the chosen transaction type and repopulate
+    // the category dropdown. Resets the current selection unless `keepValue` matches
+    // a still-valid category (used when pre-filling the edit form).
+    async function loadCategoriesForType(typeId, keepValue){
+      const prev = keepValue ? catSel.value : '';
+      if (!typeId){
+        CATS = [];
+      } else {
+        try { CATS = (await App.getCategories(typeId)) || []; }
+        catch(e){ console.error(e); CATS = []; showToast(t('toast.error')); }
+      }
+      fillSelect(catSel, CATS);
+      if (prev && CATS.some(c => String(c.id) === String(prev))) catSel.value = prev;
+      else catSel.selectedIndex = 0; // back to the "Select…" placeholder
+      if (window.AppUI) AppUI.refreshAll();
+    }
+
+    // When the type changes, the previous category may no longer belong to it —
+    // reload the category list for the new type and clear the old selection. The account
+    // cells follow too: only a transfer asks for a destination.
+    if (typeSel) typeSel.addEventListener('change', () => {
+      loadCategoriesForType(parseInt(typeSel.value, 10) || 0, false);
+      syncAccountFields();
+    });
+
+    /* ---------------- Transactions ---------------- */
+    let TX = App.cachedTransactions() || [];
+    let txLoaded = !!App.cachedTransactions();
+
+    // Visual kind for the transaction list — drives the card accent bar and the amount
+    // colour. Income/expense keep the familiar green/red; the four debt types get their
+    // own colours so a loan is never mistaken for earnings; a transfer is neutral grey.
+    const TX_KIND = {
+      income:'in', expense:'out', transfer:'tr',
+      debt_take:'pay',  debt_repay:'pay',   // our own debt: taken on / paid back
+      lend_give:'recv', lend_back:'recv'    // debt owed to us: lent out / collected
+    };
+    function txKind(tx){ return TX_KIND[typeCode(tx)] || 'out'; }
+    // The sign follows the actual cash direction, so a debt row still reads +/− even though
+    // its colour marks it as debt rather than income/expense. A transfer gets no sign.
+    function txSign(tx){ const c = txCash(tx); return c === 'in' ? '+' : (c === 'out' ? '−' : ''); }
+    function curSym(c){ return CUR_SYMBOL[c] || (c ? c + ' ' : ''); }
+    // Account label for the list — a transfer names both ends ("Наличные → Банк").
+    function accLabel(tx){
+      const from = App.pickName(tx.account_from), to = App.pickName(tx.account_to);
+      return to ? (from || '—') + ' → ' + to : from;
+    }
+
+    /* ---------------- Transactions filters + sum row ---------------- */
+    // Filter state for the Transactions table (empty string = no filter on that field).
+    const tableFilter = { type:'', cat:[], cp:[], pv:[], cur:'', from:'', to:'' };
+
+    // Distinct {id,name} reference objects present in the scoped rows for a given key.
+    function distinctRef(key){
+      const m = new Map();
+      scopedTX().forEach(tx => { const o = tx[key]; if (o && o.id != null) m.set(String(o.id), o); });
+      return [...m.values()];
+    }
+    // Distinct currency codes present in the scoped rows.
+    function distinctCurrencies(){
+      const seen = []; scopedTX().forEach(tx => { const c = tx.currency; if (c && seen.indexOf(c) === -1) seen.push(c); });
+      return seen.sort();
+    }
+    // Populate one filter <select> with an "All" option + the given {value,label} list,
+    // preserving the current selection when it's still available.
+    function fillFilterSelect(sel, items, current){
+      sel.innerHTML = `<option value="">${esc(t('tbl.f.all'))}</option>` +
+        items.map(it => `<option value="${esc(it.value)}"${String(it.value) === String(current) ? ' selected' : ''}>${esc(it.label)}</option>`).join('');
+      if (!items.some(it => String(it.value) === String(current))) sel.value = '';
+    }
+    // Multi-select fill (Category / Counterparty filters): no "All" option — an empty
+    // selection means "all". Re-marks the still-present options listed in `current`.
+    function fillMultiSelect(sel, items, current){
+      const cur = new Set((current || []).map(String));
+      sel.innerHTML = items.map(it =>
+        `<option value="${esc(it.value)}"${cur.has(String(it.value)) ? ' selected' : ''}>${esc(it.label)}</option>`
+      ).join('');
+    }
+    const selectedValues = (sel) => Array.from(sel.selectedOptions).map(o => o.value);
+    // Repopulate every filter control from the current TX set + reflect the filter state.
+    function syncTableFilters(){
+      const fType = document.getElementById('fType'), fCat = document.getElementById('fCat'),
+            fCp = document.getElementById('fCp'), fPv = document.getElementById('fPv'),
+            fCur = document.getElementById('fCur');
+      // Types keep their canonical order here too (id order == seed order), not A-Z.
+      fillFilterSelect(fType, distinctRef('type').sort((a,b) => a.id - b.id).map(o => ({ value:o.id, label:App.pickName(o) })), tableFilter.type);
+      fillMultiSelect(fCat,  distinctRef('category').sort(byLocaleName).map(o => ({ value:o.id, label:App.pickName(o) })), tableFilter.cat);
+      fillMultiSelect(fCp,   distinctRef('counterparty').sort(byLocaleName).map(o => ({ value:o.id, label:App.pickName(o) })), tableFilter.cp);
+      fillMultiSelect(fPv,   distinctRef('provider').sort(byLocaleName).map(o => ({ value:o.id, label:App.pickName(o) })), tableFilter.pv);
+      fillFilterSelect(fCur,  distinctCurrencies().map(c => ({ value:c, label:c })), tableFilter.cur);
+      // A previously-selected option may have vanished (e.g. its last tx was deleted).
+      tableFilter.type = fType.value; tableFilter.cur = fCur.value;
+      tableFilter.cat = selectedValues(fCat); tableFilter.cp = selectedValues(fCp);
+      tableFilter.pv = selectedValues(fPv);
+      const fFrom = document.getElementById('fFrom'), fTo = document.getElementById('fTo');
+      fFrom.value = tableFilter.from; fTo.value = tableFilter.to;
+      syncDateField(fFrom); syncDateField(fTo);
+      if (window.AppUI) AppUI.refreshAll();
+    }
+    // The rows of the active account (all of them when the picker is on "all accounts")
+    // that also pass the table's own filters.
+    function filterTX(){
+      return scopedTX().filter(tx => {
+        if (tableFilter.type && String(tx.type && tx.type.id) !== tableFilter.type) return false;
+        if (tableFilter.cat.length && !tableFilter.cat.includes(String(tx.category && tx.category.id))) return false;
+        if (tableFilter.cp.length && !tableFilter.cp.includes(String(tx.counterparty && tx.counterparty.id))) return false;
+        if (tableFilter.pv.length && !tableFilter.pv.includes(String(tx.provider && tx.provider.id))) return false;
+        if (tableFilter.cur && tx.currency !== tableFilter.cur) return false;
+        const iso = String(tx.occured_at || tx.date || '').slice(0,10);
+        if (tableFilter.from && !(iso && iso >= tableFilter.from)) return false;
+        if (tableFilter.to && !(iso && iso <= tableFilter.to)) return false;
+        return true;
+      });
+    }
+    // Signed amount converted into `target`, using the historical-rate figures (see txAbsIn).
+    // A transfer moves no money in or out of the ledger as a whole, so it contributes 0.
+    function txSignedIn(tx, target){
+      const dir = txCash(tx);
+      if (!dir) return 0;
+      const mag = txAbsIn(tx, target);
+      return dir === 'in' ? mag : -mag;
+    }
+    function sumChip(v, cur){
+      const sign = v < 0 ? '−' : '+';
+      return `<span class="sum-amt ${v < 0 ? 'neg' : 'pos'}">${sign}${esc(fmtNum(Math.abs(v)))} ${esc(curSym(cur))}</span>`;
+    }
+    // Combined total of the filtered rows — all transactions of all currencies converted and
+    // summed (like the dashboard), shown in each display currency → desktop tfoot + mobile card.
+    // USDT is 1:1 with USD, so listing it here would just repeat the USD column.
+    const SUM_CURRENCIES = ['USDT', 'EUR'];
+    function renderTxSum(rows){
+      const foot = document.getElementById('rowsFoot'), sumEl = document.getElementById('txSum');
+      const totals = SUM_CURRENCIES.map(cur => rows.reduce((s, tx) => s + txSignedIn(tx, cur), 0));
+      const chips = rows.length
+        ? SUM_CURRENCIES.map((cur, i) => sumChip(totals[i], cur)).join('')
+        : `<span class="sum-amt muted">—</span>`;
+      const label = `${esc(t('tbl.total'))} · ${rows.length}`;
+      const inner = `<span class="sum-label">${label}</span><span class="sum-vals">${chips}</span>`;
+      if (foot) foot.innerHTML = `<tr class="sum-row"><td colspan="10"><div class="sum-inner">${inner}</div></td></tr>`;
+      if (sumEl) sumEl.innerHTML = inner;
+    }
+
+    function renderTable(){
+      const scoped = scopedTX();
+      document.getElementById('countBadge').textContent = scoped.length;
+      try { dashOnData(); } catch(e){}
+      const content = document.getElementById('content');
+      const empty = document.getElementById('empty');
+      if (!txLoaded) return; // nothing decided yet (no cache) → leave as-is until first fetch
+
+      if (!scoped.length){
+        content.style.display = 'none';
+        empty.style.display = 'block';
+        document.getElementById('clearFiltersBtn').hidden = true;
+        // Distinguish "no transactions at all" from "none on THIS account" — otherwise an
+        // account switch looks like the whole ledger vanished.
+        const emptyAcc = !!activeAcc && TX.length > 0;
+        document.getElementById('emptyEmoji').textContent = emptyAcc ? '💳' : '🧾';
+        document.getElementById('emptyTitle').textContent = t(emptyAcc ? 'empty.acc.title' : 'empty.title');
+        document.getElementById('emptyText').textContent = t(emptyAcc ? 'empty.acc.text' : 'empty.text');
+        return;
+      }
+      content.style.display = 'block';
+      empty.style.display = 'none';
+
+      syncTableFilters();
+      const rows = filterTX();
+      // Reflect active-filter state on the clear button + the mobile toggle's count badge.
+      const isActiveFilter = (v) => Array.isArray(v) ? v.length > 0 : !!v;
+      const activeCount = ['type','cat','cp','pv','cur','from','to'].filter(k => isActiveFilter(tableFilter[k])).length;
+      document.getElementById('clearFiltersBtn').hidden = !activeCount;
+      const fc = document.getElementById('filtersCount');
+      fc.textContent = activeCount; fc.hidden = !activeCount;
+
+      // Filters matched nothing (but transactions do exist) → inline notice + empty sum.
+      if (!rows.length){
+        const note = `<div class="tx-noresults">${esc(t('tbl.noresults'))}</div>`;
+        document.getElementById('rows').innerHTML = `<tr><td colspan="10">${note}</td></tr>`;
+        document.getElementById('txCards').innerHTML = note;
+        renderTxSum(rows);
+        return;
+      }
+
+      document.getElementById('rows').innerHTML = rows.map(tx => {
+        const dir = txKind(tx);   // in | out | recv | pay | tr — same classifier the cards use
+        const sign = txSign(tx);
+        return `
+        <tr class="${dir}" data-id="${escapeHtml(tx.id)}">
+          <td class="t-date">${fmtDate(tx.occured_at || tx.date)}</td>
+          <td class="t-total ${dir}">${sign}${fmtNum(tx.total)}</td>
+          <td><span class="cur-chip">${escapeHtml(tx.currency)}</span></td>
+          <td>${tx.type ? `<span class="cur-chip">${escapeHtml(App.pickName(tx.type))}</span>` : '—'}</td>
+          <td>${tx.category ? `<span class="cur-chip">${escapeHtml(App.pickName(tx.category))}</span>` : '—'}</td>
+          <td>${escapeHtml(App.pickName(tx.counterparty) || '—')}</td>
+          <td>${escapeHtml(App.pickName(tx.provider) || '—')}</td>
+          <td>${accLabel(tx) ? `<span class="cur-chip">${escapeHtml(accLabel(tx))}</span>` : '—'}</td>
+          <td class="t-comment">${escapeHtml(tx.comment || '—')}</td>
+          <td class="act"><div class="row-actions">
+            <button class="edit" type="button" aria-label="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></button>
+            <button class="del" type="button" aria-label="Delete">✕</button>
+          </div></td>
+        </tr>`;
+      }).join('');
+
+      // Card view (mobile) — same data, CSS toggles between this and the table.
+      document.getElementById('txCards').innerHTML = rows.map(tx => {
+        const dir = txKind(tx);
+        const sign = txSign(tx);
+        const cp = escapeHtml(App.pickName(tx.counterparty) || '—');
+        const date = escapeHtml(fmtDate(tx.occured_at || tx.date));
+        const chips = [
+          tx.type ? `<span class="txc-chip">${escapeHtml(App.pickName(tx.type))}</span>` : '',
+          tx.category ? `<span class="txc-chip">${escapeHtml(App.pickName(tx.category))}</span>` : '',
+          tx.provider ? `<span class="txc-chip txc-chip-pv">${escapeHtml(App.pickName(tx.provider))}</span>` : '',
+          // Only worth a chip when several accounts are in view — with one account selected
+          // the top bar already says which, and the card stays uncluttered. A transfer is the
+          // exception: the account at the other end is news even inside a single account.
+          ((!activeAcc || tx.account_to) && accLabel(tx)) ? `<span class="txc-chip txc-chip-acc">${escapeHtml(accLabel(tx))}</span>` : ''
+        ].join('');
+        const comment = tx.comment ? `<div class="txc-comment">${escapeHtml(tx.comment)}</div>` : '';
+        return `
+        <div class="tx-card ${dir}" data-id="${escapeHtml(tx.id)}">
+          <div class="txc-top">
+            <span class="txc-cp">${cp}</span>
+            <span class="txc-amt ${dir}">${sign}${fmtNum(tx.total)} ${escapeHtml(curSym(tx.currency))}</span>
+          </div>
+          <div class="txc-row2">
+            <span class="txc-date">${date}</span>
+            <span class="txc-acts">
+              <button class="edit" type="button" aria-label="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></button>
+              <button class="del" type="button" aria-label="Delete">✕</button>
+            </span>
+          </div>
+          <div class="txc-chips">${chips}</div>
+          ${comment}
+        </div>`;
+      }).join('');
+
+      renderTxSum(rows);
+    }
+
+    // Filter controls → update state + re-render. Selects (custom widget dispatches 'change').
+    [['fType','type'], ['fCat','cat'], ['fCp','cp'], ['fPv','pv'], ['fCur','cur']].forEach(([id, key]) => {
+      const el = document.getElementById(id); if (!el) return;
+      el.addEventListener('change', () => {
+        tableFilter[key] = el.multiple ? selectedValues(el) : el.value;
+        renderTable();
+      });
+    });
+    (function(){
+      const fFrom = document.getElementById('fFrom'), fTo = document.getElementById('fTo');
+      if (fFrom) fFrom.addEventListener('change', () => {
+        tableFilter.from = fFrom.value;
+        if (tableFilter.from && tableFilter.to && tableFilter.from > tableFilter.to) tableFilter.to = tableFilter.from;
+        renderTable();
+      });
+      if (fTo) fTo.addEventListener('change', () => {
+        tableFilter.to = fTo.value;
+        if (tableFilter.from && tableFilter.to && tableFilter.to < tableFilter.from) tableFilter.from = tableFilter.to;
+        renderTable();
+      });
+    })();
+    // Reset every filter to "All" / open dates.
+    (function(){
+      const btn = document.getElementById('clearFiltersBtn'); if (!btn) return;
+      btn.addEventListener('click', () => {
+        tableFilter.type = ''; tableFilter.cat = []; tableFilter.cp = []; tableFilter.pv = [];
+        tableFilter.cur = ''; tableFilter.from = ''; tableFilter.to = '';
+        renderTable();
+      });
+    })();
+    // Mobile: expand/collapse the filter panel (no-op visual on desktop, where it's always open).
+    (function(){
+      const tog = document.getElementById('filtersToggle'); if (!tog) return;
+      tog.addEventListener('click', () => {
+        const open = document.getElementById('content').classList.toggle('filters-open');
+        tog.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open && window.AppUI) AppUI.refreshAll();  // re-sync custom selects now shown
+      });
+    })();
+
+    // Silent reconcile — only re-render when the data actually differs.
+    async function reconcileTable(){
+      if (!App.configured) return;
+      try {
+        const fresh = (await App.getTransactions()) || [];
+        const changed = !txLoaded || JSON.stringify(fresh) !== JSON.stringify(TX);
+        TX = fresh; txLoaded = true;
+        if (changed) renderTable();
+        else document.getElementById('countBadge').textContent = scopedTX().length;
+      } catch(e){ console.error(e); }
+    }
+
+    // Delegated on #content so both the table rows AND the mobile cards work.
+    const contentEl = document.getElementById('content');
+
+    // Delete a single transaction
+    contentEl.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.del');
+      if (!btn) return;
+      const host = btn.closest('[data-id]');
+      const id = host.dataset.id;
+      btn.disabled = true;
+      try {
+        await App.deleteTransaction(id);
+        TX = TX.filter(tx => String(tx.id) !== String(id));
+        App.setCachedTransactions(TX);
+        haptic('warning');
+        // Targeted O(1) update: drop the matching row + card (both views share the id)
+        // instead of re-rendering everything (that caused delete-spam lag).
+        if (!scopedTX().length){
+          renderTable();                 // last one in view gone → show the empty state
+        } else {
+          contentEl.querySelectorAll('[data-id="' + id + '"]').forEach(el => el.remove());
+          document.getElementById('countBadge').textContent = scopedTX().length;
+          renderTxSum(filterTX());       // keep the sum row in step with the removal
+          try { dashOnData(); } catch(e){} // repaint charts only if the dashboard is open
+        }
+      } catch(err){ console.error(err); btn.disabled = false; showToast(t('toast.error')); }
+    });
+
+    // Edit a single transaction → open the form pre-filled in edit mode
+    contentEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.edit');
+      if (!btn) return;
+      startEdit(btn.closest('[data-id]').dataset.id);
+    });
+
+    document.getElementById('clearBtn').onclick = () => {
+      if (!TX.length) return;
+      // The backend clears the whole ledger, not just the account in view — say so plainly
+      // when a single account is selected, so nobody wipes the other accounts by accident.
+      confirmThen(t(activeAcc ? 'confirm.clear.all' : 'confirm.clear'), async () => {
+        try {
+          await App.clearTransactions();
+          TX = []; App.setCachedTransactions(TX);
+          haptic('success');
+          renderTable();
+          showToast(t('toast.cleared'));
+        } catch(e){ console.error(e); showToast(t('toast.error')); }
+      });
+    };
+
+    /* ---------------- New transaction form ---------------- */
+    const dateInput = document.getElementById('date');
+    const dateWrap  = document.getElementById('dateWrap');
+    // Toggle has-value AND fill the mobile overlay with the locale-formatted date (native
+    // date inputs render in the OS locale, which need not be the app's). fmtDate is
+    // locale-aware, so this re-runs on language switch via syncAllDateFields().
+    function syncDateField(input){
+      const field = input.closest('.date-field');
+      if (!field) return;
+      const has = !!input.value;
+      field.classList.toggle('has-value', has);
+      const lbl = field.querySelector('.date-value');
+      if (lbl) lbl.textContent = has ? fmtDate(input.value) : '';
+    }
+    function syncAllDateFields(){
+      document.querySelectorAll('input[type="date"]').forEach(syncDateField);
+    }
+    const syncDate = () => syncDateField(dateInput);
+    dateInput.addEventListener('input', syncDate);
+    dateInput.addEventListener('change', syncDate);
+
+    const createBtn = document.getElementById('createBtn');
+    const cancelEditBtn = document.getElementById('cancelEditBtn');
+    const formTitle = document.querySelector('#view-new .title');
+    const formSubtitle = document.querySelector('#view-new .subtitle');
+
+    let editingId = null;   // null = create mode; otherwise the id being edited
+
+    // id from a nested reference object ({id,name_*}) with a flat *_id fallback
+    function refId(obj, fallback){ return (obj && obj.id != null) ? obj.id : (fallback != null ? fallback : ''); }
+
+    function resetForm(){
+      document.getElementById('total').value = '';
+      document.getElementById('comment').value = '';
+      typeSel.selectedIndex = 0; cpSel.selectedIndex = 0; pvSel.selectedIndex = 0;
+      // The source account is deliberately NOT cleared: the next entry is usually on the
+      // same account, and it's the one field where re-picking every time is pure friction.
+      syncAccountFields();   // no type → not a transfer → the destination cell goes away
+      // No type selected → no categories. Empty the list, not just the selection.
+      CATS = []; fillSelect(catSel, CATS);
+      if (window.AppUI) AppUI.refreshAll();
+      validateDebt();  // clears the debt warning (no type/cp/total selected)
+    }
+
+    // Swap the form's labels between create / edit. Uses data-i18n so a later
+    // language toggle re-localizes correctly (applyI18n reads these attributes).
+    function setFormMode(editing){
+      formTitle.dataset.i18n    = editing ? 'form.edit.title'    : 'form.title';
+      formSubtitle.dataset.i18n = editing ? 'form.edit.subtitle' : 'form.subtitle';
+      createBtn.dataset.i18n    = editing ? 'btn.save'           : 'btn.create';
+      formTitle.textContent    = t(formTitle.dataset.i18n);
+      formSubtitle.textContent = t(formSubtitle.dataset.i18n);
+      createBtn.textContent    = t(createBtn.dataset.i18n);
+      cancelEditBtn.style.display = editing ? '' : 'none';
+    }
+
+    async function startEdit(id){
+      const tx = TX.find(x => String(x.id) === String(id));
+      if (!tx) return;
+      editingId = tx.id;
+      dateInput.value = String(tx.occured_at || tx.date || '').slice(0, 10);
+      syncDate();
+      document.getElementById('total').value = tx.total != null ? tx.total : '';
+      document.getElementById('currency').value = tx.currency || 'USDT';
+      const typeId = refId(tx.type, tx.type_id);
+      typeSel.value = String(typeId);
+      // Load this type's categories before selecting, so the option exists in the list.
+      await loadCategoriesForType(parseInt(typeId, 10) || 0, false);
+      catSel.value  = String(refId(tx.category, tx.category_id));
+      cpSel.value   = String(refId(tx.counterparty, tx.counterparty_id));
+      // Provider is optional, so an empty id must land back on the "select…" placeholder
+      // rather than leaving whatever the previous edit selected.
+      const pvId = refId(tx.provider, tx.provider_id);
+      if (pvId === '' || pvId == null) pvSel.selectedIndex = 0; else pvSel.value = String(pvId);
+      // Keep the row on its own accounts (blank for rows booked before accounts existed).
+      // Reveal the destination cell FIRST — the type is set by now, so a transfer gets its
+      // second select before we try to select in it.
+      syncAccountFields();
+      setAccValue(accSel, refId(tx.account_from, tx.account_from_id));
+      setAccValue(accToSel, refId(tx.account_to, tx.account_to_id));
+      document.getElementById('comment').value = tx.comment || '';
+      if (window.AppUI) AppUI.refreshAll();  // reflect pre-filled values in custom widgets
+      setFormMode(true);
+      validateDebt();  // re-check the debt rule for the row being edited
+      showView('new');
+      views.new.scrollTop = 0;
+    }
+
+    function cancelEdit(){ editingId = null; resetForm(); setFormMode(false); }
+    cancelEditBtn.onclick = () => { cancelEdit(); showView('table'); };
+
+    // Live, non-blocking guard on the two debt-closing types: paying a debt back shouldn't
+    // exceed what was borrowed from that counterparty, and collecting on a loan shouldn't
+    // exceed what was lent to them. Compared in USD-equivalent so mixed-currency ledgers
+    // still add up. The transaction is still allowed — this only surfaces a small warning.
+    //   debt_repay closes debt_take · lend_back closes lend_give
+    const DEBT_PAIRS = {
+      debt_repay: { opens:'debt_take', closes:'debt_repay', msg:'warn.debt.repaid' },
+      lend_back:  { opens:'lend_give', closes:'lend_back',  msg:'warn.debt.collected' }
+    };
+    function validateDebt(){
+      const warnEl = document.getElementById('payableWarn'); if (!warnEl) return;
+      warnEl.hidden = true;
+      const total = parseFloat(document.getElementById('total').value);
+      const currency = document.getElementById('currency').value;
+      const type_id = parseInt(typeSel.value, 10);
+      const cp_id = parseInt(cpSel.value, 10);
+      if (!type_id || !cp_id || isNaN(total) || total <= 0) return;
+      // Only the two closing types are checked; everything else has nothing to exceed.
+      const ty = TYPES.find(x => String(x.id) === String(type_id));
+      const rule = DEBT_PAIRS[typeCodeOf(refStr(ty))];
+      if (!rule) return;
+      // Sum this counterparty's opened vs closed debt (excluding the row currently being
+      // edited, whose new values replace the old).
+      let opened = 0, closed = 0;
+      // Scoped like every other view: what's owed is compared within the account in view.
+      scopedTX().forEach(tx => {
+        if (editingId != null && String(tx.id) === String(editingId)) return;
+        const cp = tx.counterparty; if (!cp || String(cp.id) !== String(cp_id)) return;
+        const code = typeCode(tx);
+        if (code === rule.opens) opened += txAbsIn(tx, 'USDT');
+        else if (code === rule.closes) closed += txAbsIn(tx, 'USDT');
+      });
+      const draft = Math.abs(convertAmount(total, currency || 'USDT', 'USDT'));
+      const over = (closed + draft) - opened;
+      if (over > 0.005){
+        warnEl.textContent = '⚠ ' + t(rule.msg) + ' ' + fmtNum(over) + ' ' + CUR_SYMBOL.USDT;
+        warnEl.hidden = false;
+      }
+    }
+    // Re-validate live as the relevant fields change (custom selects dispatch 'change').
+    document.getElementById('total').addEventListener('input', validateDebt);
+    document.getElementById('currency').addEventListener('change', validateDebt);
+    typeSel.addEventListener('change', validateDebt);
+    cpSel.addEventListener('change', validateDebt);
+
+    createBtn.onclick = async () => {
+      const date = dateInput.value;
+      // Rounded to 2dp before it goes on the wire: the API declares total as
+      // Decimal(max_digits=12, decimal_places=2) and 422s on anything more precise.
+      const rawTotal = parseFloat(document.getElementById('total').value);
+      const total = isNaN(rawTotal) ? rawTotal : Math.round(rawTotal * 100) / 100;
+      const currency = document.getElementById('currency').value;
+      const type_id = parseInt(typeSel.value, 10);
+      const category_id = parseInt(catSel.value, 10);
+      const counterparty_id = parseInt(cpSel.value, 10);
+      const provider_id = parseInt(pvSel.value, 10) || null;   // optional
+      // The accounts come from the form's own cells. A transfer leaves `account_from_id` and
+      // lands on `account_to_id`; every other type only books onto the one account, so the
+      // destination is explicitly nulled (an edit away from "transfer" must clear it).
+      const isTransfer = formTypeCode() === 'transfer';
+      const account_from_id = parseInt(accSel.value, 10) || null;
+      const account_to_id = isTransfer ? (parseInt(accToSel.value, 10) || null) : null;
+      const comment = document.getElementById('comment').value.trim();
+
+      // Every transaction belongs to an account, so with none created yet there is nothing
+      // to pick: say what to do instead of naming a field that can't be filled, and open
+      // the place to do it (same destination as the picker's "Управление счетами").
+      if (!ACCS.length){
+        notify(t('alert.noaccounts'));
+        setTab = 'acc';
+        showView('settings'); views.settings.scrollTop = 0;
+        return;
+      }
+
+      // Name exactly which required fields are missing, so the popup is specific
+      // (e.g. only the counterparty → "Please fill in: Counterparty").
+      const missing = [];
+      if (!date) missing.push(t('field.date'));
+      if (isNaN(total) || total <= 0) missing.push(t('field.total'));
+      if (!type_id) missing.push(t('field.type'));
+      if (!category_id) missing.push(t('field.category'));
+      if (!counterparty_id) missing.push(t('field.counterparty'));
+      if (!account_from_id) missing.push(t(isTransfer ? 'field.account.from' : 'field.account'));
+      if (isTransfer && !account_to_id) missing.push(t('field.account.to'));
+      if (missing.length){ notify(t('alert.missing') + ' ' + missing.join(', ')); return; }
+      // Money can't move from an account to itself (both ends are set by now).
+      if (isTransfer && account_from_id === account_to_id){ notify(t('alert.sameaccount')); return; }
+      if (!App.configured){ notify(t('hint.config')); return; }
+
+      const payload = { occured_at: date, total, currency, type_id, category_id, counterparty_id, provider_id, account_from_id, account_to_id, comment };
+      createBtn.disabled = true;
+      try {
+        if (editingId != null){
+          await App.updateTransaction(Object.assign({ id: editingId }, payload));
+          haptic('success');
+          cancelEdit();             // exit edit mode + clear the form
+          // Switch synchronously so the blank "Create" form never flashes between the form
+          // reset and the refresh. showView('table') refreshes the list itself, so we don't
+          // await reconcileTable() here (the extra await is what caused the visible delay).
+          showView('table');        // back to the list to see the change
+          showToast(t('toast.updated'));
+        } else {
+          await App.createTransaction(payload);
+          haptic('success');
+          resetForm();
+          await reconcileTable();   // refresh cache + badge
+          showToast(t('toast.created'));
+        }
+      } catch(e){ console.error(e); haptic('error'); notify(t('toast.error')); }
+      finally { createBtn.disabled = false; }
+    };
+
+    /* ---------------- Settings: three sections, one engine ----------------
+       Accounts, counterparties and providers share the same anatomy — header (title · count ·
+       ＋) / add form / search / list — and differ only in what a row shows and which API calls
+       back it. So one config object per section drives a single set of render / add / rename /
+       delete handlers. `get()` returns the live array and `set()` writes it back, so the
+       transaction form's dropdowns pick up every change immediately. */
+    const DICTS = {
+      acc: {
+        maxLen:15,
+        listId:'accList', countId:'accCount', inputId:'accNew', addBtnId:'accAddBtn',
+        toggleId:'accAddToggle', formId:'accAddForm', searchId:'accSearch', searchWrapId:'accSearchWrap',
+        emptyKey:'set.acc.empty', addedKey:'set.acc.added', deletedKey:'set.acc.deleted',
+        confirmKey:'set.confirm.acc',
+        get: () => ACCS, set: (v) => { ACCS = v; App.setCachedAccounts(v); },
+        create: (name) => {
+          const currency = document.getElementById('accNewCur').value || 'USDT';
+          const bal = parseFloat(document.getElementById('accNewBal').value);
+          // The chosen currency rides along on the local object so the balance reads in the
+          // right unit immediately; it survives a reload once the backend returns `currency`.
+          return App.createAccount(name, isNaN(bal) ? 0 : bal, currency).then(created =>
+            (created && created.id != null) ? Object.assign({ currency: currency }, created) : created);
+        },
+        remove: (id) => App.deleteAccount(id),
+        rename: (id, name) => {
+          // PUT /account is a full replace, so resend the fields the rename doesn't touch.
+          // `balance` is the stored OPENING balance, never the computed live one.
+          const a = accById(id) || {};
+          return App.updateAccount(id, {
+            name: name, balance: Number(a.balance) || 0, currency: accCur(a)
+          });
+        },
+        // Currency chip carries the unit, so the balance beside it is a bare number.
+        meta: (a) => `<span class="dict-chip">${esc(accCur(a))}</span>` +
+                     `<span class="dict-bal${accBalance(a) < 0 ? ' neg' : ''}">${esc(accBalanceNum(a))}</span>`,
+        clearForm: () => {   // currency stays put: the next account is likely the same
+          document.getElementById('accNew').value = '';
+          document.getElementById('accNewBal').value = '';
+        },
+        // First account ever → look at it straight away; with only one account, "all
+        // accounts" would show the same rows under a vaguer name.
+        onAdded: (created) => { if (ACCS.length === 1) setStoredAcc(String(created.id)); },
+        // Scope pointed at the deleted one → fall back to the first left, or "all accounts".
+        onRemoved: (id) => {
+          if (String(activeAcc) === String(id)) setStoredAcc(ACCS.length ? String(ACCS[0].id) : '');
+        },
+        // The picker's label/balances and every account-scoped view follow account changes.
+        after: () => { renderAccSwitch(); renderTable(); }
+      },
+      cat: {
+        maxLen:25,
+        listId:'catList', countId:'catCount', inputId:'catNew', addBtnId:'catAddBtn',
+        toggleId:'catAddToggle', formId:'catAddForm', searchId:'catSearch', searchWrapId:'catSearchWrap',
+        emptyKey:'set.cat.empty', addedKey:'set.cat.added', deletedKey:'set.cat.deleted',
+        confirmKey:'set.confirm.cat',
+        get: () => OWN_CATS, set: (v) => { OWN_CATS = v; },
+        // POST /category has no response_model, so it may not echo a usable row. When it
+        // doesn't, refetch instead of leaving the new category invisible until a reload —
+        // returning nothing then tells the engine the list is already up to date.
+        create: async (name) => {
+          const created = await App.createCategory(name);
+          if (created && created.id != null) return created;
+          OWN_CATS = (await App.getOwnCategories()) || [];
+          return null;
+        },
+        remove: (id) => App.deleteCategory(id),
+        rename: (id, name) => App.updateCategory(id, name),
+        meta: () => '',
+        clearForm: () => { document.getElementById('catNew').value = ''; },
+        // The transaction form's category list is type-scoped and fetched per type, so it
+        // can't be patched from here — refetch it for whatever type is currently chosen.
+        after: () => {
+          const typeId = parseInt(typeSel.value, 10) || 0;
+          if (typeId) loadCategoriesForType(typeId, true);
+        }
+      },
+      cp: {
+        maxLen:30,
+        listId:'cpList', countId:'cpCount', inputId:'cpNew', addBtnId:'cpAddBtn',
+        toggleId:'cpAddToggle', formId:'cpAddForm', searchId:'cpSearch', searchWrapId:'cpSearchWrap',
+        emptyKey:'set.cp.empty', addedKey:'set.cp.added', deletedKey:'set.cp.deleted',
+        confirmKey:'set.confirm.cp',
+        get: () => CPS, set: (v) => { CPS = v; },
+        create: (name) => App.createCounterparty(name),
+        remove: (id) => App.deleteCounterparty(id),
+        rename: (id, name) => App.updateCounterparty(id, name),
+        meta: () => '',
+        clearForm: () => { document.getElementById('cpNew').value = ''; }
+      },
+      pv: {
+        maxLen:30,
+        listId:'pvList', countId:'pvCount', inputId:'pvNew', addBtnId:'pvAddBtn',
+        toggleId:'pvAddToggle', formId:'pvAddForm', searchId:'pvSearch', searchWrapId:'pvSearchWrap',
+        emptyKey:'set.pv.empty', addedKey:'set.pv.added', deletedKey:'set.pv.deleted',
+        confirmKey:'set.confirm.pv',
+        get: () => PVS, set: (v) => { PVS = v; },
+        create: (name) => App.createProvider(name),
+        remove: (id) => App.deleteProvider(id),
+        rename: (id, name) => App.updateProvider(id, name),
+        meta: () => '',
+        clearForm: () => { document.getElementById('pvNew').value = ''; }
+      }
+    };
+    const TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
+    const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+    const CLOSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+
+    let setTab = 'acc';                    // which section is on screen
+    // Per-section state, keyed off DICTS itself so adding a section can't forget one.
+    const dictQuery = {};                  // filter text
+    const dictEdit  = {};                  // id of the row being renamed
+    Object.keys(DICTS).forEach(k => { dictQuery[k] = ''; dictEdit[k] = null; });
+    const DICT_SEARCH_MIN = 10;            // list length that earns a search box
+
+    function renderDict(key){
+      const d = DICTS[key];
+      const all = d.get();
+      const q = dictQuery[key].trim().toLowerCase();
+      const items = all.slice().sort(byLocaleName)
+        .filter(o => !q || App.pickName(o).toLowerCase().indexOf(q) !== -1);
+      document.getElementById(d.countId).textContent = all.length;
+      // The filter only earns its place on a long list — but never disappears mid-search.
+      document.getElementById(d.searchWrapId).hidden = (all.length <= DICT_SEARCH_MIN && !q);
+
+      const list = document.getElementById(d.listId);
+      if (!items.length){
+        // Distinguish an empty section from a search that matched nothing.
+        list.innerHTML = `<li class="dict-empty">${esc(t(all.length ? 'set.nomatch' : d.emptyKey))}</li>`;
+        return;
+      }
+      list.innerHTML = items.map(o => String(dictEdit[key]) === String(o.id)
+        ? `<li class="dict-item editing" data-id="${esc(o.id)}">
+             <input class="dict-rename" type="text" maxlength="${esc(d.maxLen)}" value="${esc(App.pickName(o))}" />
+             <button class="dict-ok" type="button" aria-label="${esc(t('set.save'))}">${CHECK_SVG}</button>
+             <button class="dict-cancel" type="button" aria-label="${esc(t('btn.cancel'))}">${CLOSE_SVG}</button>
+           </li>`
+        : `<li class="dict-item" data-id="${esc(o.id)}">
+             <span class="dict-dot"></span>
+             <button class="dict-name" type="button" title="${esc(t('set.rename'))}">${esc(App.pickName(o))}</button>
+             ${d.meta(o)}
+             <button class="dict-del" type="button" aria-label="${esc(t('btn.clear'))}">${TRASH_SVG}</button>
+           </li>`).join('');
+      // Renaming → put the caret at the end of the name, ready to edit.
+      if (dictEdit[key] != null){
+        const inp = list.querySelector('.dict-rename');
+        if (inp){ inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+      }
+    }
+    function renderDicts(){ Object.keys(DICTS).forEach(renderDict); setSettingsTab(setTab); }
+
+    // Show one section, and leave the others tidy (no half-open form, no pending rename).
+    function setSettingsTab(key){
+      setTab = key;
+      Object.keys(DICTS).forEach(k => {
+        document.getElementById('setPanel-' + k).hidden = (k !== key);
+        if (k !== key){ dictEdit[k] = null; toggleDictForm(k, false); }
+      });
+      document.querySelectorAll('.subtab').forEach(b => b.classList.toggle('active', b.dataset.set === key));
+      renderDict(key);
+    }
+    // ＋ reveals the add form (and becomes ✕); called with no `open` it flips the current state.
+    function toggleDictForm(key, open){
+      const d = DICTS[key];
+      const form = document.getElementById(d.formId), tog = document.getElementById(d.toggleId);
+      const show = (open == null) ? form.hidden : open;
+      form.hidden = !show;
+      tog.setAttribute('aria-expanded', show ? 'true' : 'false');
+      if (show) document.getElementById(d.inputId).focus();
+    }
+    // The server rejects a duplicate name with 409. Worth telling apart from a generic
+    // failure: categories collide against the seeded list too, which this client never
+    // sees, so a 409 is the only way it can learn the name was taken.
+    function isConflict(e){ return /\b409\b/.test((e && e.message) || ''); }
+
+    // Case-insensitive duplicate guard. `exceptId` lets a rename keep its own name.
+    function dictHasName(key, name, exceptId){
+      const n = name.toLowerCase();
+      return DICTS[key].get().some(o =>
+        String(o.id) !== String(exceptId) && App.pickName(o).toLowerCase() === n);
+    }
+
+    async function addDictEntry(key){
+      const d = DICTS[key];
+      const input = document.getElementById(d.inputId), btn = document.getElementById(d.addBtnId);
+      const name = input.value.trim();
+      if (!name){ input.focus(); return; }
+      if (!App.configured){ notify(t('hint.config')); return; }
+      // Names are the only thing the user sees, so a case-insensitive duplicate is almost
+      // certainly a mistake — reject it client-side instead of creating a twin.
+      if (dictHasName(key, name)){ showToast(t('set.dup')); return; }
+      btn.disabled = true;
+      try {
+        const created = await d.create(name);
+        if (created && created.id != null){
+          d.set(d.get().concat([created]));
+          if (d.onAdded) d.onAdded(created);
+        }
+        d.clearForm();              // form stays open, ready for the next entry
+        renderDict(key);
+        refillSelects();            // immediately pickable on the transaction form
+        if (d.after) d.after();
+        haptic('success');
+        showToast(t(d.addedKey));
+      } catch(e){ console.error(e); haptic('error'); showToast(t(isConflict(e) ? 'set.dup' : 'toast.error')); }
+      finally { btn.disabled = false; document.getElementById(d.inputId).focus(); }
+    }
+
+    async function renameDictEntry(key, id){
+      const d = DICTS[key];
+      const input = document.getElementById(d.listId).querySelector('.dict-item[data-id="' + id + '"] .dict-rename');
+      const entry = d.get().filter(o => String(o.id) === String(id))[0];
+      if (!input || !entry) return;
+      const name = input.value.trim();
+      // Blank or unchanged → nothing to save, just leave edit mode.
+      if (!name || name === App.pickName(entry)){ dictEdit[key] = null; renderDict(key); return; }
+      if (dictHasName(key, name, id)){ showToast(t('set.dup')); input.focus(); return; }
+      input.disabled = true;
+      try {
+        const updated = await d.rename(id, name);
+        // Trust the server's echo when it sends one, otherwise apply the typed name.
+        d.set(d.get().map(o => String(o.id) === String(id)
+          ? Object.assign({}, o, (updated && updated.id != null) ? updated : { name: name })
+          : o));
+        dictEdit[key] = null;
+        renderDict(key);
+        refillSelects();
+        if (d.after) d.after();
+        haptic('success');
+        showToast(t('set.renamed'));
+        // Transactions embed the renamed object, so refetch to show the new label on them.
+        reconcileTable();
+      } catch(e){
+        // Leaves the row in edit mode with the typed text intact, so nothing is lost.
+        console.error(e); input.disabled = false; haptic('error');
+        showToast(t(isConflict(e) ? 'set.dup' : 'set.rename.failed'));
+        input.focus();
+      }
+    }
+
+    function deleteDictEntry(key, id, btn){
+      const d = DICTS[key];
+      const entry = d.get().filter(o => String(o.id) === String(id))[0];
+      confirmThen(t(d.confirmKey).replace('%s', App.pickName(entry) || ''), async () => {
+        btn.disabled = true;
+        try {
+          await d.remove(id);
+          d.set(d.get().filter(o => String(o.id) !== String(id)));
+          if (d.onRemoved) d.onRemoved(id);
+          dictEdit[key] = null;
+          renderDict(key);
+          refillSelects();
+          if (d.after) d.after();
+          haptic('warning');
+          showToast(t(d.deletedKey));
+          // A deleted entry may still be referenced by existing rows (the FK is
+          // ON DELETE SET NULL), so pull the list again to reflect the cleared field.
+          reconcileTable();
+        } catch(e){ console.error(e); btn.disabled = false; haptic('error'); showToast(t('set.inuse')); }
+      });
+    }
+
+    document.getElementById('setTabs').addEventListener('click', (e) => {
+      const b = e.target.closest('.subtab');
+      if (b) setSettingsTab(b.dataset.set);
+    });
+
+    Object.keys(DICTS).forEach(key => {
+      const d = DICTS[key];
+      document.getElementById(d.toggleId).onclick = () => toggleDictForm(key);
+      document.getElementById(d.addBtnId).onclick = () => addDictEntry(key);
+      document.getElementById(d.inputId).addEventListener('keydown', (e) => {
+        if (e.key === 'Enter'){ e.preventDefault(); addDictEntry(key); }
+        else if (e.key === 'Escape'){ toggleDictForm(key, false); }
+      });
+      const search = document.getElementById(d.searchId);
+      search.addEventListener('input', () => { dictQuery[key] = search.value; renderDict(key); });
+      const list = document.getElementById(d.listId);
+      list.addEventListener('click', (e) => {
+        const host = e.target.closest('[data-id]');
+        if (!host) return;
+        const id = host.dataset.id;
+        const del = e.target.closest('.dict-del');
+        if (del){ deleteDictEntry(key, id, del); return; }
+        if (e.target.closest('.dict-ok')){ renameDictEntry(key, id); return; }
+        if (e.target.closest('.dict-cancel')){ dictEdit[key] = null; renderDict(key); return; }
+        // Tapping the name opens the rename field in place.
+        if (e.target.closest('.dict-name')){ dictEdit[key] = id; renderDict(key); }
+      });
+      list.addEventListener('keydown', (e) => {
+        if (!e.target.classList.contains('dict-rename')) return;
+        const host = e.target.closest('[data-id]');
+        if (e.key === 'Enter'){ e.preventDefault(); renameDictEntry(key, host.dataset.id); }
+        else if (e.key === 'Escape'){ e.preventDefault(); dictEdit[key] = null; renderDict(key); }
+      });
+    });
+
+    /* ---------------- Dashboard (live charts built from the same TX list) ----------------
+       Mirrors the xlsx "Огляд" sheet: income vs expenses by month, net-profit dynamics,
+       cumulative cash balance, and expense/income structure by category. Everything is
+       derived from the live transactions, so it updates the moment a tx is added/removed. */
+    // Categorical palette anchored on the brand orange→purple ramp, with enough hue
+    // separation for the donut/bar-list to stay readable on white.
+    const DASH_PALETTE = ['#f97316','#a855f7','#2563eb','#16a34a','#e11d48','#7c3aed',
+                          '#0891b2','#d97706','#db2777','#4f46e5','#65a30d','#0ea5e9'];
+    // Neutral chart chrome for a light background.
+    const CHART_TEXT = '#3f3850', CHART_MUTED = '#6b6478', CHART_GRID = 'rgba(27,20,37,.09)';
+    /* ---------------- Currencies ----------------
+       USDT is the base unit — it leads the list, so it's the default on the form and the
+       dashboard. These three are the only ones the API accepts (the `currency` column is
+       constrained to them), so they're the only ones that can be stored or converted. */
+    const CURRENCIES = ['USDT', 'USD', 'EUR'];
+    // Display symbols only. The extras cost nothing and keep a stray legacy code rendering
+    // as a symbol rather than as bare text (curSym falls back to the code itself).
+    const CUR_SYMBOL = { USDT:'₮', USD:'$', EUR:'€', GBP:'£', PLN:'zł' };
+    // Fallback cross-rates, USDT per 1 unit — USDT is the pivot, hence 1. USD is 1 too:
+    // USDT is pegged to the dollar, and the backend stores exactly that (get_exchange_data
+    // writes USD as 1.0000 and derives EUR from the NBU cross-rate).
+    // The dashboard normally uses the backend's per-transaction total_usdt/usd/eur (each
+    // converted with the historical rate for that tx's date); these flat rates are only used
+    // when a tx's date has no stored rate and the field comes back null.
+    const CUR_RATES_USDT = { USDT: 1, USD: 1, EUR: 1.1457 };
+    // Which pre-converted field on a transaction holds its value in a given currency.
+    const CUR_FIELD = { USDT:'total_usdt', USD:'total_usd', EUR:'total_eur' };
+    function convertAmount(total, from, to){
+      const n = Number(total) || 0;
+      const r = CUR_RATES_USDT[from], q = CUR_RATES_USDT[to];
+      return (r && q) ? n * r / q : n; // unknown currency → leave as-is
+    }
+    // Absolute value of a transaction in `cur`, preferring the backend's historical-rate
+    // figure and falling back to a flat conversion when that date has no stored rate.
+    // Single source of truth for every currency total in the app (sums, dashboard, balances).
+    function txAbsIn(tx, cur){
+      const field = CUR_FIELD[cur];
+      let v = field ? tx[field] : null;
+      if (v == null) v = convertAmount(tx.total, tx.currency || cur, cur);
+      return Math.abs(Number(v) || 0);
+    }
+    const dashState = { currency:null, from:'', to:'', cats:null }; // from/to = '' (open); cats:null = all
+    let dashCharts = {};
+
+    // Money in the selected dashboard currency. `full=true` → exact European format
+    // ("10.000,00 $"), used by tooltips where there's room. `full` omitted/false → compact
+    // K/M abbreviation ("209,8K $"), used by KPI cards and P&L table cells so values fit on
+    // one line. Chart axis ticks use dashTick.
+    function dashMoney(v, full){
+      const cur = dashState.currency || 'USDT';
+      const sym = CUR_SYMBOL[cur] || cur || '';
+      const suf = sym ? ' ' + sym : '';
+      const sign = v < 0 ? '-' : '';
+      const a = Math.abs(v);
+      if (full) return sign + euNum(a, 2) + suf;
+      if (a >= 1e6) return sign + euNum(a / 1e6, 1) + 'M' + suf;
+      if (a >= 1e3) return sign + euNum(a / 1e3, 1) + 'K' + suf;
+      return sign + euNum(a, 0) + suf;
+    }
+    // Money for chart axis ticks — full number, no K/M abbreviation.
+    function dashTick(v){
+      const cur = dashState.currency || 'USDT';
+      const sym = CUR_SYMBOL[cur] || cur || '';
+      const sign = v < 0 ? '-' : '';
+      return sign + euNum(Math.abs(v), 0) + (sym ? ' ' + sym : '');
+    }
+
+    // Transaction type name, lowercased, for the keyword classifiers below.
+    function typeStr(tx){ return refStr(tx.type); }
+    // Category name, lowercased (drives the investments/dividends KPIs + CF buckets).
+    function catStr(tx){ return refStr(tx.category); }
+    function refStr(ref){ return App.pickName(ref).toLowerCase(); }
+
+    /* ---------------- Transaction types: name → stable code ----------------
+       The backend seeds exactly seven types. Everything downstream classifies on the CODE,
+       never on the name, so a renamed or re-translated type only needs a pattern added here.
+       Each pattern is anchored on the one word that tells its type apart from the others
+       (all four debt types share the word "debt" in Russian, so the verb is what matters).
+       Codes:
+         income     money earned          expense    money spent
+         transfer   between own accounts  debt_take  we borrowed (cash in, we owe more)
+         debt_repay we paid back          lend_give  we lent out (cash out, they owe us)
+         lend_back  they paid us back
+       Order matters — the first match wins. Two types open with the same verb ("collected
+       into debt" vs "collected on what was lent out"), so the more specific one is tested
+       first and is keyed on the participle, which the other name does not contain. */
+    const TYPE_RULES = [
+      ['transfer',   /перевод|transfer/],
+      ['debt_repay', /вернул|repaid|repay/],
+      ['lend_back',  /выданн|collected/],       // must precede debt_take: both say "получил"
+      ['debt_take',  /получил|взял|borrow/],
+      ['lend_give',  /выдал|lent|lend/],
+      ['expense',    /расход|expense|cost/],
+      ['income',     /доход|income|revenue/]
+    ];
+    // Code for an already-lowercased type name; '' when nothing matches (unknown type).
+    function typeCodeOf(name){
+      for (let i = 0; i < TYPE_RULES.length; i++) if (TYPE_RULES[i][1].test(name)) return TYPE_RULES[i][0];
+      return '';
+    }
+    function typeCode(tx){ return typeCodeOf(typeStr(tx)); }
+    // The four types that move a debt balance rather than profit — used wherever debt is
+    // tracked (per-counterparty table, financing bucket, the form's overpayment warning).
+    const DEBT_CODES = { debt_take:1, debt_repay:1, lend_give:1, lend_back:1 };
+
+    // P&L classification — only earning and spending hit profit. Transfers move money
+    // between our own accounts, and the four debt types move the balance sheet (a borrowed
+    // sum is not revenue, repaying it is not a cost), so all five return '' and stay out
+    // of the income/expense charts.
+    function txPL(tx){
+      const c = typeCode(tx);
+      if (c === 'income') return 'income';
+      if (c === 'expense') return 'expense';
+      return '';
+    }
+    // Cash direction — did money actually move, and which way. A transfer nets to zero
+    // across the ledger (it leaves one account and enters another), so it reports ''.
+    const TX_CASH = {
+      income:'in', expense:'out', transfer:'',
+      debt_take:'in',   debt_repay:'out',   // borrowing brings cash in, repaying takes it out
+      lend_give:'out',  lend_back:'in'      // lending takes cash out, collecting brings it in
+    };
+    // …but that zero only holds for the ledger as a whole. Seen from ONE account a transfer
+    // is a real movement: out of the source, into the destination. `accId` is the account
+    // asking ('' / null = the whole ledger, where transfers cancel out as before).
+    function txCashFor(tx, accId){
+      const c = typeCode(tx);
+      if (c === 'transfer'){
+        // A transfer that names no destination (a row booked before the second account
+        // cell existed) says nothing about where the money went — leave it neutral, so
+        // balances read exactly as they did before both ends were recorded.
+        if (!accId || txToAccId(tx) == null) return '';
+        if (String(txAccId(tx)) === String(accId)) return 'out';
+        if (String(txToAccId(tx)) === String(accId)) return 'in';
+        return '';
+      }
+      return c ? TX_CASH[c] : 'out';
+    }
+    // The app-wide scope asks by default, so lists, sums and the dashboard all follow the
+    // account picker: transfers are signed inside one account and neutral across all of them.
+    function txCash(tx){ return txCashFor(tx, activeAcc); }
+    // P&L statement classification — same rule as txPL, in the statement's own vocabulary.
+    function pnlClass(tx){
+      const pl = txPL(tx);
+      return pl === 'income' ? 'rev' : (pl === 'expense' ? 'cost' : '');
+    }
+    // Category keyword classifiers — refine the P&L (investments aren't income,
+    // dividends aren't an expense) and drive the cash-flow statement's buckets.
+    function catIsInvestment(tx){ return /инвестиц|investment/.test(catStr(tx)); }
+    function catIsDividend(tx){ return /дивиденд|dividend/.test(catStr(tx)); }
+    // Payroll — feeds the standalone Salaries table (every transaction in this category,
+    // whatever its type).
+    function catIsSalary(tx){ return /зарплат|salary|payroll/.test(catStr(tx)); }
+    // Loan/debt principal (but NOT the interest category) — a financing movement, so it's
+    // kept out of the P&L just like investments are.
+    function catIsLoanPrincipal(tx){ const s = catStr(tx); return /кредит|долг|loan|credit|debt/.test(s) && !/%|процент|interest/.test(s); }
+    // Cash-flow activity bucket for a transaction. The four debt types are financing by
+    // definition, whatever category they carry; otherwise the category decides:
+    //   inv — investing  (investments, fixed assets)
+    //   fin — financing  (debt principal, dividends)
+    //   op  — operating  (everything else: sales, goods, salary … incl. loan interest)
+    function cfActivity(tx){
+      const c = typeCode(tx);
+      if (c === 'debt_take' || c === 'debt_repay' || c === 'lend_give' || c === 'lend_back') return 'fin';
+      // A transfer only shows up here when a single account is in scope (see txCashFor) —
+      // it's an internal movement, never operating income or cost.
+      if (c === 'transfer') return 'fin';
+      const s = catStr(tx);
+      if (catIsInvestment(tx) || /основны.{0,3}средств|fixed\s*asset/.test(s)) return 'inv';
+      if (catIsDividend(tx)) return 'fin';
+      if (catIsLoanPrincipal(tx)) return 'fin';
+      return 'op';
+    }
+    // Canonical row order for P&L / cash-flow category rows (mirrors the spec ordering).
+    // Unknown categories fall to the end and sort by amount there.
+    const CAT_ORDER = [
+      /продаж|sales/, /товар|goods/, /зарплат|salary|payroll/, /логистик|logistic/,
+      /услуг|service/, /подписк|subscription/, /аренд|rent/, /коммунал|utilit/,
+      /реклам|advertis|marketing/, /основны.{0,3}средств|fixed\s*asset/,
+      /(%|процент|interest)/, /налог|tax/, /кредит|долг|loan|credit|debt/,
+      /дивиденд|dividend/, /инвестиц|investment/, /перевод|transfer/
+    ];
+    function catOrder(name){ const s = String(name).toLowerCase(); for (let i=0;i<CAT_ORDER.length;i++) if (CAT_ORDER[i].test(s)) return i; return 99; }
+    function txISO(tx){ return String(tx.occured_at || tx.date || '').slice(0,10); }
+    function txMonth(tx){ const d = txISO(tx); return d ? d.slice(0,7) : ''; } // YYYY-MM
+    function monthLabel(key){
+      const p = key.split('-'); const d = new Date(+p[0], (+p[1]||1)-1, 1);
+      try { return new Intl.DateTimeFormat(locale(), { month:'short', year:'2-digit' }).format(d); }
+      catch(e){ return key; }
+    }
+    function catName(tx){ return App.pickName(tx.category) || t('dash.uncat'); }
+    function cpName(tx){ return App.pickName(tx.counterparty) || t('dash.nocp'); }
+
+    // Currency filter options. Selecting one converts EVERY transaction into that
+    // currency (it no longer filters the rows). USDT is first → the default view. Any code
+    // found in the rows but not in CURRENCIES is appended, so an unexpected one still shows
+    // up in the picker instead of its transactions quietly vanishing from the totals.
+    function dashCurrencies(){
+      const list = CURRENCIES.slice();
+      TX.forEach(tx => { const c = tx.currency; if (c && list.indexOf(c) === -1) list.push(c); });
+      return list;
+    }
+    // Every transaction of the selected account is in scope (all accounts when the picker
+    // is on "all") — the currency filter changes the display/aggregation currency, not
+    // which rows are shown.
+    function dashCurRows(){ return scopedTX().slice(); }
+    // Amount used for aggregation, in the selected dashboard currency. The backend
+    // pre-computes total_usdt / total_usd / total_eur per transaction (using the
+    // historical rate for that tx's date) — see txAbsIn for the field mapping and the
+    // fallback used when that date has no stored rate.
+    function txAmount(tx){ return txAbsIn(tx, dashState.currency || 'USDT'); }
+    function dashRows(){
+      let rows = dashCurRows();
+      // Date range filter (string compare works: both sides are YYYY-MM-DD). Either end may be open.
+      if (dashState.from) rows = rows.filter(tx => txISO(tx) && txISO(tx) >= dashState.from);
+      if (dashState.to)   rows = rows.filter(tx => txISO(tx) && txISO(tx) <= dashState.to);
+      if (dashState.cats) rows = rows.filter(tx => dashState.cats.has(catName(tx)));
+      return rows;
+    }
+
+    function dashSyncControls(){
+      const curs = dashCurrencies();
+      if (!dashState.currency || curs.indexOf(dashState.currency) === -1) dashState.currency = curs[0] || null;
+      const selC = document.getElementById('dashCurrency');
+      selC.innerHTML = curs.map(c => {
+        const labelC = CUR_SYMBOL[c] ? (c + ' (' + CUR_SYMBOL[c] + ')') : c;
+        return `<option value="${esc(c)}" ${c===dashState.currency?'selected':''}>${esc(labelC)}</option>`;
+      }).join('');
+
+      // Date-range bounds below span every transaction (all rows are always in scope;
+      // the currency filter converts amounts, it doesn't drop rows).
+      const inCur = dashCurRows();
+
+      // Date pickers — constrain to the min/max dates present, and reflect current state.
+      const dates = inCur.map(txISO).filter(Boolean).sort();
+      const minD = dates[0] || '', maxD = dates[dates.length - 1] || '';
+      const fromEl = document.getElementById('dashFrom'), toEl = document.getElementById('dashTo');
+      fromEl.min = minD; fromEl.max = maxD; toEl.min = minD; toEl.max = maxD;
+      fromEl.value = dashState.from || '';
+      toEl.value   = dashState.to   || '';
+      // Toggle the localized placeholder overlay + fill the mobile value overlay.
+      syncDateField(fromEl); syncDateField(toEl);
+      if (window.AppUI) AppUI.refreshAll();  // sync custom currency/date widgets
+    }
+
+    function dashAgg(){
+      const rows = dashRows();
+      const monthsObj = {};
+      rows.forEach(tx => { const k = txMonth(tx); if (k) monthsObj[k] = true; });
+      const months = Object.keys(monthsObj).sort();
+      const inc = {}, exp = {}, cashNet = {};
+      months.forEach(k => { inc[k] = 0; exp[k] = 0; cashNet[k] = 0; });
+      const expCat = {}; const expCp = {}; let totIn = 0, totOut = 0;
+      // Balance-sheet style KPIs (point 2): what we owe is what we borrowed minus what we
+      // paid back; what we're owed is what we lent minus what came back. Investments and
+      // dividends are summed by category.
+      let lent = 0, lentBack = 0, borrowed = 0, repaid = 0, invest = 0, dividend = 0;
+      // P&L pivot (point 7): revenue = income rows, costs = expense rows, broken down by
+      // category × month for the statement table + waterfall. Investments are excluded from
+      // income; dividends are pulled out of expenses into their own line (an appropriation
+      // of profit), tracked per month in pnlDivTot.
+      const pnlInc = {}, pnlExp = {}, pnlIncTot = {}, pnlExpTot = {}, pnlDivTot = {};
+      // Cash-flow statement (direct method): realised cash movements, signed (+in / −out),
+      // grouped by category within operating / investing / financing activities.
+      const cfOp = {}, cfInv = {}, cfFin = {}, cfOpTot = {}, cfInvTot = {}, cfFinTot = {};
+      // Open debt per counterparty (point 8).
+      const cpMap = {};
+      // Salaries pivot: every transaction in the payroll category, counterparty × month.
+      const salCp = {}, salTot = {};
+      const bump = (obj, key, k, v) => { (obj[key] = obj[key] || {})[k] = (obj[key][k] || 0) + v; };
+      rows.forEach(tx => {
+        const k = txMonth(tx); if (!k) return;
+        const amt = txAmount(tx);
+        const c = catName(tx);
+        if (catIsSalary(tx)){ bump(salCp, cpName(tx), k, amt); salTot[k] = (salTot[k] || 0) + amt; }
+        // Income / expense charts: operating P&L only. Investments, dividends and debt
+        // principal are financing/investing movements → kept out of these aggregates
+        // (dividends get their own P&L line below; the rest only show in cash flow).
+        const pl = txPL(tx);
+        const isInv = catIsInvestment(tx), isDiv = catIsDividend(tx), isLoan = catIsLoanPrincipal(tx);
+        const pnlExcl = isInv || isDiv || isLoan;
+        if (pl === 'income' && !pnlExcl){ inc[k] += amt; totIn += amt; }
+        else if (pl === 'expense' && !pnlExcl){ exp[k] += amt; totOut += amt; expCat[c] = (expCat[c]||0) + amt; expCp[cpName(tx)] = (expCp[cpName(tx)]||0) + amt; }
+        // Cash-balance chart: every realised cash movement (incl. loans, dividends…).
+        const cd = txCash(tx);
+        if (cd === 'in') cashNet[k] += amt; else if (cd === 'out') cashNet[k] -= amt;
+        // Cash-flow statement: same realised movements, signed and bucketed by activity.
+        if (cd){
+          const sv = (cd === 'in' ? amt : -amt), act = cfActivity(tx);
+          const dst = act === 'inv' ? cfInv : (act === 'fin' ? cfFin : cfOp);
+          const tot = act === 'inv' ? cfInvTot : (act === 'fin' ? cfFinTot : cfOpTot);
+          bump(dst, c, k, sv); tot[k] = (tot[k] || 0) + sv;
+        }
+        // Debt balances (by transaction type) + investments / dividends (by category).
+        const code = typeCode(tx);
+        if (code === 'lend_give')  lent     += amt;
+        if (code === 'lend_back')  lentBack += amt;
+        if (code === 'debt_take')  borrowed += amt;
+        if (code === 'debt_repay') repaid   += amt;
+        if (isInv) invest += amt;
+        if (isDiv) dividend += amt;
+        // P&L pivot (see pnlClass). Investments + debt principal stay out of revenue and
+        // costs; dividends are split off into their own line (pnlDivTot).
+        const pc = pnlClass(tx);
+        if (pc === 'rev' && !pnlExcl){  bump(pnlInc, c, k, amt); pnlIncTot[k] = (pnlIncTot[k]||0) + amt; }
+        if (pc === 'cost' && !pnlExcl){ bump(pnlExp, c, k, amt); pnlExpTot[k] = (pnlExpTot[k]||0) + amt; }
+        if (pc === 'cost' && isDiv){ pnlDivTot[k] = (pnlDivTot[k]||0) + amt; }
+        // Per-counterparty debt balances.
+        if (DEBT_CODES[code]){
+          const cp = cpName(tx);
+          const m = cpMap[cp] || (cpMap[cp] = { lend_give:0, lend_back:0, debt_take:0, debt_repay:0 });
+          m[code] += amt;
+        }
+      });
+      const incA = months.map(k => inc[k]), expA = months.map(k => exp[k]);
+      const net = months.map((k,i) => incA[i] - expA[i]);
+      let run = 0; const cash = months.map(k => (run += cashNet[k]));
+      // Counterparty rows with a non-zero open balance, biggest exposure first.
+      const cpRows = Object.keys(cpMap).map(name => {
+        const m = cpMap[name];
+        return { name, payable: m.debt_take - m.debt_repay, receivable: m.lend_give - m.lend_back };
+      }).filter(r => Math.round(r.payable) !== 0 || Math.round(r.receivable) !== 0)
+        .sort((a,b) => (Math.abs(b.payable)+Math.abs(b.receivable)) - (Math.abs(a.payable)+Math.abs(a.receivable)));
+      const pnlRev = months.reduce((s,k) => s + (pnlIncTot[k]||0), 0);
+      const pnlCost = months.reduce((s,k) => s + (pnlExpTot[k]||0), 0);
+      return { months, labels: months.map(monthLabel), inc: incA, exp: expA, net, cash, totIn, totOut, expCat, expCp,
+        receivable: lent - lentBack, payable: borrowed - repaid, invest, dividend, count: rows.length,
+        pnlInc, pnlExp, pnlIncTot, pnlExpTot, pnlDivTot, pnlRev, pnlCost, cpRows,
+        cfOp, cfInv, cfFin, cfOpTot, cfInvTot, cfFinTot, salCp, salTot };
+    }
+
+    function dashTooltip(extra){
+      return Object.assign({
+        backgroundColor:'#ffffff', borderColor:'rgba(27,20,37,.12)', borderWidth:1,
+        padding:10, titleColor:'#1b1425', bodyColor:CHART_TEXT, usePointStyle:true
+      }, extra || {});
+    }
+    function dashAxisOpts(showLegend){
+      return {
+        responsive:true, maintainAspectRatio:false,
+        interaction:{ mode:'index', intersect:false },
+        plugins:{
+          legend:{ display:!!showLegend, position:'top', align:'end',
+            labels:{ usePointStyle:true, boxWidth:8, padding:12, font:{ size:11 }, color:CHART_TEXT } },
+          tooltip: dashTooltip({ callbacks:{ label:c => ' ' + c.dataset.label + ': ' + dashMoney(c.parsed.y, true) } })
+        },
+        scales:{
+          x:{ grid:{ display:false }, ticks:{ color:CHART_MUTED, font:{ size:11 } } },
+          y:{ grid:{ color:CHART_GRID }, ticks:{ color:CHART_MUTED, font:{ size:11 }, callback:v => dashTick(v) } }
+        }
+      };
+    }
+    function dashDonutOpts(){
+      return {
+        responsive:true, maintainAspectRatio:false, cutout:'60%',
+        plugins:{
+          legend:{ position:'bottom', labels:{ usePointStyle:true, boxWidth:8, padding:10, font:{ size:11 }, color:CHART_TEXT } },
+          tooltip: dashTooltip({ callbacks:{ label:c => {
+            const tot = c.dataset.data.reduce((a,b)=>a+b,0) || 1;
+            return ' ' + c.label + ': ' + dashMoney(c.parsed, true) + ' (' + (c.parsed/tot*100).toFixed(1) + '%)';
+          } } })
+        }
+      };
+    }
+    function lineGradient(canvas, color){
+      const g = canvas.getContext('2d').createLinearGradient(0, 0, 0, 230);
+      g.addColorStop(0, color + '55'); g.addColorStop(1, color + '05'); return g;
+    }
+    // Donut slices from a {category: amount} map (with a grey "no data" placeholder).
+    function donutData(map){
+      const e = Object.entries(map).sort((a,b)=>b[1]-a[1]);
+      if (!e.length) return { labels:[t('dash.none')], data:[1], colors:['rgba(27,20,37,.10)'] };
+      return { labels:e.map(x=>x[0]), data:e.map(x=>x[1]), colors:e.map((x,i)=>DASH_PALETTE[i%DASH_PALETTE.length]) };
+    }
+    // Horizontal bar-list from a {name: amount} map — top N counterparties, biggest first.
+    function topCpData(map, n){
+      const e = Object.entries(map).sort((a,b)=>b[1]-a[1]).slice(0, n || 6);
+      if (!e.length) return { labels:[t('dash.none')], data:[0], colors:['rgba(27,20,37,.10)'] };
+      return { labels:e.map(x=>x[0]), data:e.map(x=>x[1]), colors:e.map((x,i)=>DASH_PALETTE[i%DASH_PALETTE.length]) };
+    }
+    function dashBarListOpts(){
+      return {
+        indexAxis:'y', responsive:true, maintainAspectRatio:false,
+        plugins:{
+          legend:{ display:false },
+          tooltip: dashTooltip({ callbacks:{ title:c => c[0] && c[0].label, label:c => ' ' + dashMoney(c.parsed.x, true) } })
+        },
+        scales:{
+          x:{ grid:{ color:CHART_GRID }, ticks:{ color:CHART_MUTED, font:{ size:11 }, callback:v => dashTick(v) } },
+          y:{ grid:{ display:false }, ticks:{ color:CHART_TEXT, font:{ size:11 },
+            callback:function(v){ const l = this.getLabelForValue(v); return l.length > 16 ? l.slice(0,15) + '…' : l; } } }
+        }
+      };
+    }
+    // P&L waterfall: revenue rises from 0, costs step it down (a floating bar), net is the
+    // remainder. `mags` holds each bar's magnitude for the tooltip (the bars are ranges).
+    function pnlData(a){
+      const R = a.pnlRev, C = a.pnlCost, net = R - C;
+      return {
+        labels: [t('dash.pnl.rev'), t('dash.pnl.cost'), t('dash.pnl.net')],
+        ranges: [[0, R], [R - C, R], net >= 0 ? [0, net] : [net, 0]],
+        colors: ['#16a34a', '#dc2626', net >= 0 ? '#7c3aed' : '#dc2626'],
+        mags: [R, C, net]
+      };
+    }
+    function dashWaterfallOpts(){
+      return {
+        responsive:true, maintainAspectRatio:false,
+        plugins:{
+          legend:{ display:false },
+          tooltip: dashTooltip({ callbacks:{ label:c => ' ' + dashMoney((c.chart.$pnlMag || [])[c.dataIndex] || 0, true) } })
+        },
+        scales:{
+          x:{ grid:{ display:false }, ticks:{ color:CHART_MUTED, font:{ size:11 } } },
+          y:{ grid:{ color:CHART_GRID }, ticks:{ color:CHART_MUTED, font:{ size:11 }, callback:v => dashTick(v) } }
+        }
+      };
+    }
+
+    // Build the dashboard charts once (first paint / after returning from the empty state).
+    function createCharts(a){
+      const pnl = pnlData(a);
+      dashCharts.pnl = new Chart(document.getElementById('cPnl'), {
+        type:'bar',
+        data:{ labels:pnl.labels, datasets:[{ data:pnl.ranges, backgroundColor:pnl.colors, borderRadius:5, maxBarThickness:80 }] },
+        options: dashWaterfallOpts()
+      });
+      dashCharts.pnl.$pnlMag = pnl.mags;
+      const netCanvas = document.getElementById('cNet');
+      dashCharts.net = new Chart(netCanvas, {
+        type:'line',
+        data:{ labels:a.labels, datasets:[{ label:t('dash.c.net'), data:a.net,
+          borderColor:'#7c3aed', backgroundColor:lineGradient(netCanvas,'#7c3aed'),
+          fill:true, tension:.35, borderWidth:3, pointRadius:3, pointBackgroundColor:'#7c3aed', pointHoverRadius:6 }] },
+        options: dashAxisOpts(false)
+      });
+      const cashCanvas = document.getElementById('cCash');
+      dashCharts.cash = new Chart(cashCanvas, {
+        type:'line',
+        data:{ labels:a.labels, datasets:[{ label:t('dash.c.cash'), data:a.cash,
+          borderColor:'#f97316', backgroundColor:lineGradient(cashCanvas,'#f97316'),
+          fill:true, tension:.35, borderWidth:3, pointRadius:3, pointBackgroundColor:'#f97316', pointHoverRadius:6 }] },
+        options: dashAxisOpts(false)
+      });
+      const de = donutData(a.expCat);
+      dashCharts.exp = new Chart(document.getElementById('cExp'), {
+        type:'doughnut',
+        data:{ labels:de.labels, datasets:[{ data:de.data, backgroundColor:de.colors, borderColor:'#ffffff', borderWidth:2, hoverOffset:6 }] },
+        options: dashDonutOpts()
+      });
+      const tc = topCpData(a.expCp);
+      dashCharts.topcp = new Chart(document.getElementById('cTopCp'), {
+        type:'bar',
+        data:{ labels:tc.labels, datasets:[{ data:tc.data, backgroundColor:tc.colors, borderRadius:5, maxBarThickness:26 }] },
+        options: dashBarListOpts()
+      });
+    }
+
+    // Feed new data into the existing charts and let Chart.js animate the transition —
+    // no destroy/recreate, so filter/data changes morph smoothly instead of flashing.
+    // Labels are re-set too so a language switch updates legends in place.
+    function updateCharts(a){
+      const pnl = pnlData(a);
+      const pl = dashCharts.pnl;
+      pl.data.labels = pnl.labels;
+      pl.data.datasets[0].data = pnl.ranges; pl.data.datasets[0].backgroundColor = pnl.colors;
+      pl.$pnlMag = pnl.mags; pl.update();
+
+      const net = dashCharts.net;
+      net.data.labels = a.labels; net.data.datasets[0].label = t('dash.c.net'); net.data.datasets[0].data = a.net; net.update();
+
+      const cash = dashCharts.cash;
+      cash.data.labels = a.labels; cash.data.datasets[0].label = t('dash.c.cash'); cash.data.datasets[0].data = a.cash; cash.update();
+
+      const de = donutData(a.expCat);
+      const ce = dashCharts.exp;
+      ce.data.labels = de.labels; ce.data.datasets[0].data = de.data; ce.data.datasets[0].backgroundColor = de.colors; ce.update();
+
+      const tc = topCpData(a.expCp);
+      const ct = dashCharts.topcp;
+      ct.data.labels = tc.labels; ct.data.datasets[0].data = tc.data; ct.data.datasets[0].backgroundColor = tc.colors; ct.update();
+    }
+
+    function destroyCharts(){
+      Object.values(dashCharts).forEach(c => { try { c.destroy(); } catch(e){} });
+      dashCharts = {};
+    }
+
+    function renderDashKpis(a){
+      const net = a.totIn - a.totOut;
+      const cash = a.cash.length ? a.cash[a.cash.length-1] : 0;
+      const cards = [
+        ['dash.kpi.income',      dashMoney(a.totIn, false),      '#16a34a'],
+        ['dash.kpi.expenses',    dashMoney(a.totOut, false),     '#dc2626'],
+        ['dash.kpi.net',         dashMoney(net, false),          '#7c3aed'],
+        ['dash.kpi.cash',        dashMoney(cash, false),         '#f97316'],
+        ['dash.kpi.receivable',  dashMoney(a.receivable, false), '#2563eb'],
+        ['dash.kpi.payable',     dashMoney(a.payable, false),    '#d97706'],
+        ['dash.kpi.invest',      dashMoney(a.invest, false),     '#a855f7'],
+        ['dash.kpi.dividend',    dashMoney(a.dividend, false),   '#db2777']
+      ];
+      document.getElementById('dashKpis').innerHTML = cards.map(([k,val,acc]) =>
+        `<div class="kpi" style="--accent:${acc}"><div class="k-label">${esc(t(k))}</div><div class="k-val">${esc(val)}</div></div>`
+      ).join('');
+    }
+
+    // P&L card subtitle → live margin %.
+    function renderPnlSub(a){
+      const el = document.getElementById('pnlSub'); if (!el) return;
+      const m = a.pnlRev ? (a.pnlRev - a.pnlCost) / a.pnlRev * 100 : 0;
+      el.textContent = t('dash.pnl.margin') + ' ' + m.toFixed(1) + '%';
+    }
+
+    // One numeric cell (muted when zero so the matrix reads cleanly).
+    function pnlCell(v){ return `<td class="num${Math.round(v) ? '' : ' muted'}">${esc(dashMoney(v, false))}</td>`; }
+    // A signed numeric cell (green positive / red negative) for cash-flow figures.
+    function flowCell(v){ return `<td class="num${Math.round(v) ? (v < 0 ? ' neg' : ' pos') : ' muted'}">${esc(dashMoney(v, false))}</td>`; }
+    // A section subtotal row followed by its category rows, ordered per the spec
+    // (catOrder), falling back to amount for anything unrecognised. `cell` chooses the
+    // formatting (plain for P&L, signed for cash flow); `metric` ranks the fallback.
+    function pivotSection(label, totMap, catMap, months, cell, metric){
+      cell = cell || pnlCell; metric = metric || (v => v);
+      const per = months.map(m => totMap[m] || 0);
+      const total = per.reduce((s,v) => s + v, 0);
+      let html = `<tr class="r-section"><td class="rowlabel">${esc(label)}</td>${per.map(cell).join('')}${cell(total)}</tr>`;
+      Object.keys(catMap).map(name => {
+        const mp = catMap[name];
+        return { name, mp, tot: months.reduce((s,m) => s + (mp[m] || 0), 0), ord: catOrder(name) };
+      }).sort((x,y) => (x.ord - y.ord) || (metric(y.tot) - metric(x.tot))).forEach(c => {
+        html += `<tr class="r-cat"><td class="rowlabel">${esc(c.name)}</td>${months.map(m => cell(c.mp[m] || 0)).join('')}${cell(c.tot)}</tr>`;
+      });
+      return html;
+    }
+    // P&L statement pivot — Income + categories, Expenses + categories, then Net income,
+    // Dividends (after net income — an appropriation of profit) and Margin %.
+    function renderPnlTable(a){
+      const tbl = document.getElementById('pnlTable'); if (!tbl) return;
+      const months = a.months, labels = a.labels;
+      if (!months.length){ tbl.innerHTML = `<tbody><tr><td class="data-empty">${esc(t('dash.pnl.none'))}</td></tr></tbody>`; return; }
+      const head = `<thead><tr><th class="rowlabel">${esc(t('dash.pnl.title'))}</th>${
+        labels.map(l => `<th>${esc(l)}</th>`).join('')}<th>${esc(t('dash.pnl.total'))}</th></tr></thead>`;
+      let body = pivotSection(t('dash.pnl.income'),   a.pnlIncTot, a.pnlInc, months);
+      body    += pivotSection(t('dash.pnl.expenses'), a.pnlExpTot, a.pnlExp, months);
+      // Net income = income − expenses.
+      const net = months.map(m => (a.pnlIncTot[m] || 0) - (a.pnlExpTot[m] || 0));
+      const netTotal = net.reduce((s,v) => s + v, 0);
+      body += `<tr class="r-total r-net"><td class="rowlabel">${esc(t('dash.pnl.netincome'))}</td>${net.map(flowCell).join('')}${flowCell(netTotal)}</tr>`;
+      // Dividends — shown after net income, never inside the expense block.
+      const div = months.map(m => a.pnlDivTot[m] || 0);
+      const divTotal = div.reduce((s,v) => s + v, 0);
+      body += `<tr class="r-div"><td class="rowlabel">${esc(t('dash.pnl.dividends'))}</td>${div.map(pnlCell).join('')}${pnlCell(divTotal)}</tr>`;
+      // Margin % = net income / income (per month and overall).
+      const marginCell = (n, r) => {
+        if (!Math.round(r)) return `<td class="num muted">—</td>`;
+        const m = n / r * 100;
+        return `<td class="num${m < 0 ? ' neg' : ' pos'}">${esc(m.toFixed(1))}%</td>`;
+      };
+      body += `<tr class="r-margin"><td class="rowlabel">${esc(t('dash.pnl.marginpct'))}</td>${
+        months.map(m => marginCell((a.pnlIncTot[m] || 0) - (a.pnlExpTot[m] || 0), a.pnlIncTot[m] || 0)).join('')
+        }${marginCell(netTotal, a.pnlRev)}</tr>`;
+      tbl.innerHTML = head + '<tbody>' + body + '</tbody>';
+    }
+    // Cash-flow statement (direct method) — Operating / Investing / Financing activities,
+    // each a category breakdown with its net subtotal, then total Net cash flow.
+    function renderCashflowTable(a){
+      const tbl = document.getElementById('cfTable'); if (!tbl) return;
+      const months = a.months, labels = a.labels;
+      const hasData = Object.keys(a.cfOp).length || Object.keys(a.cfInv).length || Object.keys(a.cfFin).length;
+      if (!months.length || !hasData){ tbl.innerHTML = `<tbody><tr><td class="data-empty">${esc(t('dash.cf.none'))}</td></tr></tbody>`; return; }
+      const head = `<thead><tr><th class="rowlabel">${esc(t('dash.cf.title'))}</th>${
+        labels.map(l => `<th>${esc(l)}</th>`).join('')}<th>${esc(t('dash.pnl.total'))}</th></tr></thead>`;
+      const absMetric = v => Math.abs(v);
+      let body = '';
+      if (Object.keys(a.cfOp).length)  body += pivotSection(t('dash.cf.op'),  a.cfOpTot,  a.cfOp,  months, flowCell, absMetric);
+      if (Object.keys(a.cfInv).length) body += pivotSection(t('dash.cf.inv'), a.cfInvTot, a.cfInv, months, flowCell, absMetric);
+      if (Object.keys(a.cfFin).length) body += pivotSection(t('dash.cf.fin'), a.cfFinTot, a.cfFin, months, flowCell, absMetric);
+      const netM = months.map(m => (a.cfOpTot[m] || 0) + (a.cfInvTot[m] || 0) + (a.cfFinTot[m] || 0));
+      const netT = netM.reduce((s,v) => s + v, 0);
+      body += `<tr class="r-total r-net"><td class="rowlabel">${esc(t('dash.cf.net'))}</td>${netM.map(flowCell).join('')}${flowCell(netT)}</tr>`;
+      // Cumulative (running) cash flow — each month carries forward the prior months' net,
+      // so a column reads as the closing cash position at the end of that month. The Total
+      // column shows the final running balance (equal to the sum of all monthly net flows).
+      let cfRun = 0; const cumM = netM.map(v => (cfRun += v));
+      body += `<tr class="r-total"><td class="rowlabel">${esc(t('dash.cf.cum'))}</td>${cumM.map(flowCell).join('')}${flowCell(netT)}</tr>`;
+      tbl.innerHTML = head + '<tbody>' + body + '</tbody>';
+    }
+    // Receivables / payables per counterparty (net open balance), biggest first, with a total row.
+    function renderCpTable(a){
+      const tbl = document.getElementById('cpTable'); if (!tbl) return;
+      const rows = a.cpRows;
+      if (!rows.length){ tbl.innerHTML = `<tbody><tr><td class="data-empty">${esc(t('dash.cp.none'))}</td></tr></tbody>`; return; }
+      const head = `<thead><tr><th class="rowlabel">${esc(t('dash.cp.counterparty'))}</th>` +
+        `<th>${esc(t('dash.cp.payable'))}</th><th>${esc(t('dash.cp.receivable'))}</th></tr></thead>`;
+      const body = rows.map(r =>
+        `<tr><td class="rowlabel">${esc(r.name)}</td>` +
+        `<td class="num${Math.round(r.payable) ? ' neg' : ' muted'}">${esc(dashMoney(r.payable, false))}</td>` +
+        `<td class="num${Math.round(r.receivable) ? ' pos' : ' muted'}">${esc(dashMoney(r.receivable, false))}</td></tr>`
+      ).join('');
+      const totPay = rows.reduce((s,r) => s + r.payable, 0), totRecv = rows.reduce((s,r) => s + r.receivable, 0);
+      const foot = `<tr class="r-total"><td class="rowlabel">${esc(t('dash.pnl.total'))}</td>` +
+        `<td class="num">${esc(dashMoney(totPay, false))}</td><td class="num">${esc(dashMoney(totRecv, false))}</td></tr>`;
+      tbl.innerHTML = head + '<tbody>' + body + foot + '</tbody>';
+    }
+    // Salaries — every transaction in the payroll category, pivoted counterparty × month
+    // with a per-counterparty total column and a monthly total row. Months come from the
+    // same axis as the other statements, so the columns line up across the dashboard.
+    function renderSalaryTable(a){
+      const tbl = document.getElementById('salTable'); if (!tbl) return;
+      const months = a.months, labels = a.labels;
+      const names = Object.keys(a.salCp);
+      if (!months.length || !names.length){
+        tbl.innerHTML = `<tbody><tr><td class="data-empty">${esc(t('dash.sal.none'))}</td></tr></tbody>`;
+        return;
+      }
+      const head = `<thead><tr><th class="rowlabel">${esc(t('dash.sal.who'))}</th>${
+        labels.map(l => `<th>${esc(l)}</th>`).join('')}<th>${esc(t('dash.pnl.total'))}</th></tr></thead>`;
+      // Biggest payroll first — the row order that answers "who costs most".
+      const rows = names.map(name => {
+        const mp = a.salCp[name];
+        return { name, mp, tot: months.reduce((s,m) => s + (mp[m] || 0), 0) };
+      }).sort((x,y) => y.tot - x.tot);
+      const body = rows.map(r =>
+        `<tr><td class="rowlabel">${esc(r.name)}</td>${
+          months.map(m => pnlCell(r.mp[m] || 0)).join('')}${pnlCell(r.tot)}</tr>`
+      ).join('');
+      const per = months.map(m => a.salTot[m] || 0);
+      const grand = per.reduce((s,v) => s + v, 0);
+      const foot = `<tr class="r-total"><td class="rowlabel">${esc(t('dash.pnl.total'))}</td>${
+        per.map(pnlCell).join('')}${pnlCell(grand)}</tr>`;
+      tbl.innerHTML = head + '<tbody>' + body + foot + '</tbody>';
+    }
+
+    function renderDashboard(){
+      if (!window.Chart) return;
+      const empty = document.getElementById('dashEmpty');
+      const content = document.getElementById('dashContent');
+      const kpis = document.getElementById('dashKpis');
+
+      if (!scopedTX().length || !dashState.currency){
+        destroyCharts();
+        content.style.display = 'none'; kpis.style.display = 'none'; empty.style.display = 'block';
+        return;
+      }
+      empty.style.display = 'none'; content.style.display = 'block'; kpis.style.display = '';
+
+      const a = dashAgg();
+      renderDashKpis(a);
+      renderPnlSub(a);
+      renderPnlTable(a);
+      renderCashflowTable(a);
+      renderCpTable(a);
+      renderSalaryTable(a);
+      Chart.defaults.font.family = "Inter, system-ui, sans-serif";
+      Chart.defaults.color = CHART_MUTED;
+
+      // Update existing charts in place (smooth, animated) or build them on first paint.
+      if (Object.keys(dashCharts).length) updateCharts(a);
+      else createCharts(a);
+    }
+
+    // Called whenever the TX list changes (or language switches). Repaints live if the
+    // dashboard is on screen; otherwise the next dashShow() rebuilds it.
+    function dashOnData(){
+      if (!views.dash || views.dash.hidden) return;
+      dashSyncControls(); renderDashboard();
+    }
+    // Called when the dashboard tab becomes visible. Charts persist across tab switches
+    // now (no recreate), so re-fit them to the container in case the viewport changed
+    // while the tab was hidden.
+    function dashShow(){ dashSyncControls(); renderDashboard(); dashResizeSoon(); }
+
+    document.getElementById('dashCurrency').onchange = (e) => { dashState.currency = e.target.value; dashState.cats = null; dashSyncControls(); renderDashboard(); };
+    document.getElementById('dashFrom').onchange = (e) => {
+      dashState.from = e.target.value;
+      if (dashState.from && dashState.to && dashState.from > dashState.to) dashState.to = dashState.from;
+      dashSyncControls(); renderDashboard();
+    };
+    document.getElementById('dashTo').onchange = (e) => {
+      dashState.to = e.target.value;
+      if (dashState.from && dashState.to && dashState.to < dashState.from) dashState.from = dashState.to;
+      dashSyncControls(); renderDashboard();
+    };
+    // CTA → open the site in the system browser (a plain target=_blank anchor does this;
+    // we deliberately do NOT use tg.openLink, which routes through Telegram's in-app browser).
+
+    // Re-fit charts when the viewport changes. Telegram's fullscreen toggle (esp. desktop
+    // on→off) resizes the webview without always firing a resize Chart.js catches in time,
+    // leaving canvases clipped — so we explicitly resize after the transition settles.
+    let _dashResizeTimers = [];
+    function dashResizeSoon(){
+      _dashResizeTimers.forEach(clearTimeout);
+      const doResize = () => {
+        if (!window.Chart || !views.dash || views.dash.hidden) return;
+        Object.values(dashCharts).forEach(c => { try { c.resize(); } catch(e){} });
+      };
+      _dashResizeTimers = [setTimeout(doResize, 200), setTimeout(doResize, 550)];
+    }
+    if (typeof tg.onEvent === 'function'){
+      tg.onEvent('fullscreenChanged', dashResizeSoon);
+      tg.onEvent('viewportChanged', dashResizeSoon);
+    }
+    window.addEventListener('resize', dashResizeSoon);
+    // Most reliable trigger: observe the dashboard's own box, so charts re-fit on ANY
+    // size change (fullscreen exit, window resize, reflow) regardless of which event fires.
+    // Safe from loops — resizing the charts doesn't change #view-dash's own width/height.
+    if (window.ResizeObserver && views.dash){
+      try { new ResizeObserver(dashResizeSoon).observe(views.dash); } catch(e){}
+    }
+
+    /* ---------------- Init ---------------- */
+    if (window.AppUI) AppUI.enhanceAll();  // custom selects/date picker on desktop (no-op on touch)
+    applyI18n();
+    syncDate();
+    renderAccSwitch();       // paint the picker from the cached accounts (no "all" flash)
+    renderTable();           // instant paint from cache (badge + table)
+    showView('new');
+    (async () => {
+      try { await App.ensureUser(); } catch(e){ console.error(e); }
+      await loadOptions();
+      reconcileTable();      // silent refresh
+    })();
+  </script>
+</body>
+</html>
