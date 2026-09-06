@@ -75,18 +75,30 @@ select {
 
 /* ------------------------------------------------------------------ shell -- */
 
-/* --app-height is Telegram's stable viewport height; 100dvh is the browser
-   fallback. Fixed height + an inner scroll area keeps the bottom nav pinned
-   without position:fixed fighting the on-screen keyboard. */
+/* Fixed height + an inner scroll area keeps the bottom nav pinned without
+   position:fixed fighting the on-screen keyboard. The two heights here are
+   fallbacks - the real one comes from the @supports rule below. */
 .app {
   height: 100%;
   height: 100dvh;
-  height: var(--app-height, 100dvh);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   padding-left: var(--inset-left);
   padding-right: var(--inset-right);
+}
+
+/* The page must be as tall as Telegram's VISIBLE area, not the screen: 100dvh
+   counts the strip the client keeps for its own bar, which pushes the bottom nav
+   past the fold. --tg-viewport-stable-height is set by Telegram's own SDK - the
+   reported height minus that bar, ignoring the keyboard so the shell does not
+   jump while typing. Guarded by @supports because a browser without dvh must
+   never reach this rule: an unsupported unit inside a var() fallback drops the
+   declaration, and the height with it. */
+@supports (height: 1dvh) {
+  .app {
+    height: var(--tg-viewport-stable-height, 100dvh);
+  }
 }
 
 .topbar {

@@ -24,7 +24,8 @@ interface TgWebApp {
   expand(): void;
   isExpanded: boolean;
   platform?: string;
-  viewportStableHeight?: number;
+  isFullscreen?: boolean;
+  exitFullscreen?(): void;
   safeAreaInset?: TgInset;
   contentSafeAreaInset?: TgInset;
   BackButton: TgBackButton;
@@ -51,59 +52,92 @@ declare global {
 export const tg: TgWebApp | undefined = window.Telegram?.WebApp;
 export const inTelegram = Boolean(tg);
 
-/* Telegram Desktop and the browser clients hand the Mini App an ordinary
-   resizable window rather than a phone-shaped sheet, and their viewport numbers
-   are not usable: the height arrives in the client's own units, so as soon as
-   the OS is running any display scaling it disagrees with the CSS pixels the
-   page is laid out in - the app then paints into a fraction of the window, or
-   runs off past its bottom edge. In those clients the webview simply IS the
-   window, so CSS viewport units are both correct and immune to the mismatch. */
-const WINDOWED_PLATFORMS = ["tdesktop", "macos", "web", "weba", "webk", "unigram"];
-export const isWindowedClient =
-  !tg || WINDOWED_PLATFORMS.includes(tg.platform ?? "unknown");
+/* ------------------------------------------------------------- fullscreen --
+
+   A Mini App can be launched straight INTO fullscreen: the "open app" / Main
+   Mini App entry point sets tgWebAppFullscreen, and nothing in the page asked
+   for it. On desktop that is a trap - the client drops the Mini App window's
+   frame, so the app appears wherever the client put it, at whatever size it
+   chose, with no title bar left to drag. It cannot be moved and it cannot be
+   resized. So a launch-time fullscreen is dropped on any desktop-like client.
+
+   On a phone fullscreen is fine and is kept: there Telegram's own floating
+   controls and the device notch sit ON TOP of the page, which is exactly what
+   the insets below pad for.
+
+   The fullscreen API arrived in Bot API 8.0; older clients report nothing and
+   exitFullscreen THROWS, hence the optional calls and the try/catch. */
+
+const MOBILE_PLATFORMS = ["android", "android_x", "ios"];
+
+function isTouchDevice(): boolean {
+  try {
+    return window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+  } catch {
+    return false;
+  }
+}
+
+/** Desktop = not a known mobile client AND not a touch screen, so an unknown
+ *  platform on a phone keeps its fullscreen instead of being forced out of it. */
+function isDesktopLike(): boolean {
+  const platform = String(tg?.platform ?? "unknown").toLowerCase();
+  return !MOBILE_PLATFORMS.includes(platform) && !isTouchDevice();
+}
+
+/* The client only clears isFullscreen once it answers with fullscreenChanged,
+   so this flag keeps the page from painting fullscreen padding it is about to
+   lose - a strip of dead space at the top for as long as the round trip takes. */
+let fsExitPending = false;
+
+function inFullscreen(): boolean {
+  return Boolean(tg?.isFullscreen) && !fsExitPending;
+}
+
+function normalizeFullscreen(): void {
+  if (!tg?.isFullscreen || !isDesktopLike()) return;
+  try {
+    tg.exitFullscreen?.();
+    fsExitPending = true;
+  } catch (e) {
+    console.warn("[planner] exitFullscreen unsupported by this client", e);
+  }
+}
 
 /** Copies Telegram's reported insets into CSS custom properties.
  *
- *  In fullscreen the Mini App owns the whole screen, so the notch and
- *  Telegram's own floating controls sit on top of the page. `safeAreaInset` is
- *  the device chrome, `contentSafeAreaInset` is Telegram's own - they stack, so
- *  the layout has to pad by the sum. Without this the bottom nav ends up
- *  underneath Telegram's bar and the top row underneath the close button. */
+ *  Only in fullscreen. There the Mini App owns the whole screen, so the notch
+ *  and Telegram's own floating controls sit on top of the page: `safeAreaInset`
+ *  is the device chrome, `contentSafeAreaInset` is Telegram's own, and they
+ *  stack, so the layout has to pad by the sum - without it the bottom nav ends
+ *  up underneath Telegram's bar and the top row underneath the close button.
+ *
+ *  In the normal launch mode Telegram's chrome is OUTSIDE the webview, so the
+ *  properties are cleared instead and the 0px defaults in styles.css apply;
+ *  padding by them there would only add a dead strip. */
+
+// Insets exist from Bot API 8.0 on. When a fullscreen client stays silent this
+// still clears its controls, which is the failure that actually hurts.
+const FS_TOP_FALLBACK = 56;
+
 function applyInsets(): void {
   const root = document.documentElement;
-  const safe = tg?.safeAreaInset ?? { top: 0, bottom: 0, left: 0, right: 0 };
-  const content = tg?.contentSafeAreaInset ?? { top: 0, bottom: 0, left: 0, right: 0 };
 
-  root.style.setProperty("--inset-top", `${safe.top + content.top}px`);
-  root.style.setProperty("--inset-bottom", `${safe.bottom + content.bottom}px`);
-  root.style.setProperty("--inset-left", `${safe.left + content.left}px`);
-  root.style.setProperty("--inset-right", `${safe.right + content.right}px`);
-}
-
-/** On a phone the page must be as tall as Telegram's VISIBLE area, not the
- *  device screen: 100dvh counts the strip Telegram keeps for its own bar, which
- *  would push the bottom nav past the fold.
- *
- *  On a windowed client the opposite holds - see WINDOWED_PLATFORMS - so the
- *  property is cleared and the stylesheet's 100dvh fallback takes over, which
- *  also means window resizes need no handling here. */
-function applyViewport(): void {
-  const root = document.documentElement;
-
-  if (isWindowedClient) {
-    root.style.removeProperty("--app-height");
+  if (!inFullscreen()) {
+    for (const side of ["top", "bottom", "left", "right"]) {
+      root.style.removeProperty(`--inset-${side}`);
+    }
     return;
   }
 
-  const height = tg?.viewportStableHeight;
-  if (!height) return;
+  const safe = tg?.safeAreaInset ?? { top: 0, bottom: 0, left: 0, right: 0 };
+  const content = tg?.contentSafeAreaInset ?? { top: 0, bottom: 0, left: 0, right: 0 };
 
-  // Same unit mismatch can surface on a phone client, and a height that is
-  // nowhere near the webview's own is always the client being wrong.
-  const webview = window.innerHeight;
-  const plausible = !webview || (height > webview * 0.5 && height < webview * 1.5);
-
-  root.style.setProperty("--app-height", `${plausible ? height : webview}px`);
+  const top = Math.max(safe.top + content.top, FS_TOP_FALLBACK);
+  root.style.setProperty("--inset-top", `${top}px`);
+  root.style.setProperty("--inset-bottom", `${safe.bottom + content.bottom}px`);
+  root.style.setProperty("--inset-left", `${safe.left + content.left}px`);
+  root.style.setProperty("--inset-right", `${safe.right + content.right}px`);
 }
 
 export function initTelegram(): void {
@@ -111,6 +145,9 @@ export function initTelegram(): void {
 
   tg.ready();
   if (!tg.isExpanded) tg.expand();
+
+  // Desktop: never stay in a fullscreen the launch entry point asked for.
+  normalizeFullscreen();
 
   // Our palette is a fixed light one, so pin Telegram's chrome to match rather
   // than following the user's Telegram theme. Keep these two in step with --bg
@@ -123,11 +160,16 @@ export function initTelegram(): void {
   tg.disableVerticalSwipes?.();
 
   applyInsets();
-  applyViewport();
 
+  tg.onEvent("fullscreenChanged", () => {
+    fsExitPending = false;
+    applyInsets();
+  });
   tg.onEvent("safeAreaChanged", applyInsets);
   tg.onEvent("contentSafeAreaChanged", applyInsets);
-  tg.onEvent("viewportChanged", applyViewport);
+  // The insets move on their own: rotation, keyboard, Telegram shifting its
+  // controls. The page's height is Telegram's own CSS variable, not ours.
+  tg.onEvent("viewportChanged", applyInsets);
 
   // Bound once for the life of the app; what it does depends on the stack.
   tg.BackButton.onClick(dispatchBack);
