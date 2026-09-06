@@ -48,6 +48,7 @@ html,
 body {
   margin: 0;
   padding: 0;
+  height: 100%;
 }
 
 html {
@@ -78,6 +79,7 @@ select {
    fallback. Fixed height + an inner scroll area keeps the bottom nav pinned
    without position:fixed fighting the on-screen keyboard. */
 .app {
+  height: 100%;
   height: 100dvh;
   height: var(--app-height, 100dvh);
   display: flex;
@@ -878,4 +880,30 @@ select {
 .powered a:active {
   color: var(--accent);
   border-bottom-color: var(--accent);
+}
+
+/* ---------------------------------------------------------------- desktop -- */
+
+/* Telegram Desktop opens a Mini App in a plain resizable window, which is far
+   wider than any phone. The layout is one phone-width column by design, so cap
+   it and centre it rather than stretching a 400px list across the whole window;
+   the hairlines mark where the column ends. */
+@media (min-width: 600px) {
+  .app {
+    max-width: 560px;
+    margin: 0 auto;
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+  }
+
+  /* The sheet belongs to that column, not to the window. */
+  .sheet-backdrop {
+    justify-content: center;
+  }
+
+  .sheet {
+    max-width: 560px;
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+  }
 }

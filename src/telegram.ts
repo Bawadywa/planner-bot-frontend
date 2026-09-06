@@ -23,6 +23,7 @@ interface TgWebApp {
   ready(): void;
   expand(): void;
   isExpanded: boolean;
+  platform?: string;
   viewportStableHeight?: number;
   safeAreaInset?: TgInset;
   contentSafeAreaInset?: TgInset;
@@ -50,6 +51,17 @@ declare global {
 export const tg: TgWebApp | undefined = window.Telegram?.WebApp;
 export const inTelegram = Boolean(tg);
 
+/* Telegram Desktop and the browser clients hand the Mini App an ordinary
+   resizable window rather than a phone-shaped sheet, and their viewport numbers
+   are not usable: the height arrives in the client's own units, so as soon as
+   the OS is running any display scaling it disagrees with the CSS pixels the
+   page is laid out in - the app then paints into a fraction of the window, or
+   runs off past its bottom edge. In those clients the webview simply IS the
+   window, so CSS viewport units are both correct and immune to the mismatch. */
+const WINDOWED_PLATFORMS = ["tdesktop", "macos", "web", "weba", "webk", "unigram"];
+export const isWindowedClient =
+  !tg || WINDOWED_PLATFORMS.includes(tg.platform ?? "unknown");
+
 /** Copies Telegram's reported insets into CSS custom properties.
  *
  *  In fullscreen the Mini App owns the whole screen, so the notch and
@@ -68,14 +80,30 @@ function applyInsets(): void {
   root.style.setProperty("--inset-right", `${safe.right + content.right}px`);
 }
 
-/** The page must be as tall as Telegram's VISIBLE area, not the device screen:
- *  100dvh counts the strip Telegram keeps for its own bar, which would push the
- *  bottom nav past the fold. */
+/** On a phone the page must be as tall as Telegram's VISIBLE area, not the
+ *  device screen: 100dvh counts the strip Telegram keeps for its own bar, which
+ *  would push the bottom nav past the fold.
+ *
+ *  On a windowed client the opposite holds - see WINDOWED_PLATFORMS - so the
+ *  property is cleared and the stylesheet's 100dvh fallback takes over, which
+ *  also means window resizes need no handling here. */
 function applyViewport(): void {
-  const height = tg?.viewportStableHeight;
-  if (height) {
-    document.documentElement.style.setProperty("--app-height", `${height}px`);
+  const root = document.documentElement;
+
+  if (isWindowedClient) {
+    root.style.removeProperty("--app-height");
+    return;
   }
+
+  const height = tg?.viewportStableHeight;
+  if (!height) return;
+
+  // Same unit mismatch can surface on a phone client, and a height that is
+  // nowhere near the webview's own is always the client being wrong.
+  const webview = window.innerHeight;
+  const plausible = !webview || (height > webview * 0.5 && height < webview * 1.5);
+
+  root.style.setProperty("--app-height", `${plausible ? height : webview}px`);
 }
 
 export function initTelegram(): void {
