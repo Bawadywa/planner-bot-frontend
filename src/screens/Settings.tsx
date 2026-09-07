@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import * as api from "../api";
 import { Sheet } from "../components/Sheet";
 import { PoweredBy } from "../components/PoweredBy";
-import { LogoutIcon, PlusIcon, SendIcon, TrashIcon } from "../components/Icons";
+import { PlusIcon, SendIcon, TrashIcon } from "../components/Icons";
 import {
   botUsername,
   confirmAction,
@@ -11,6 +11,7 @@ import {
   inviteLink,
   shareToTelegram,
 } from "../telegram";
+import { displayName, handle, initials } from "../lib/user";
 import type { Board, ID, Invite, Member, User } from "../types";
 
 /** The line that rides along with the link in the shared message. Telegram
@@ -26,10 +27,13 @@ function inviteText(boardTitles: string[]): string {
 
 interface SettingsProps {
   user: User;
-  onSignOut: () => void;
+  /** Called after the local database is wiped, so the shell can re-derive the
+   *  identity from Telegram. There is no sign-out to pair with it: the account
+   *  is the Telegram one, and the app cannot revoke it. */
+  onReset: () => void;
 }
 
-export function Settings({ user, onSignOut }: SettingsProps) {
+export function Settings({ user, onReset }: SettingsProps) {
   const [members, setMembers] = useState<Member[]>([]);
   const [boards, setBoards] = useState<Board[]>([]);
   const [invites, setInvites] = useState<Invite[]>([]);
@@ -52,7 +56,7 @@ export function Settings({ user, onSignOut }: SettingsProps) {
   }, [load]);
 
   async function remove(member: Member) {
-    const ok = await confirmAction(`Remove ${member.email} from the team?`);
+    const ok = await confirmAction(`Remove ${displayName(member)} from the team?`);
     if (!ok) return;
     try {
       await api.removeMember(member.id);
@@ -82,20 +86,13 @@ export function Settings({ user, onSignOut }: SettingsProps) {
     await load();
   }
 
-  async function signOut() {
-    const ok = await confirmAction("Sign out of this device?");
-    if (!ok) return;
-    await api.logout();
-    onSignOut();
-  }
-
   async function clearData() {
     const ok = await confirmAction(
       "Erase every board, task and comment stored in this browser? This cannot be undone.",
     );
     if (!ok) return;
     await api.resetLocalData();
-    onSignOut();
+    onReset();
   }
 
   const usage = api.storageUsage();
@@ -115,10 +112,16 @@ export function Settings({ user, onSignOut }: SettingsProps) {
         </div>
         <div className="list">
           <div className="row" style={{ cursor: "default" }}>
-            <div className="avatar">{user.email.slice(0, 2)}</div>
+            {user.photo_url ? (
+              <img className="avatar" src={user.photo_url} alt="" />
+            ) : (
+              <div className="avatar">{initials(user)}</div>
+            )}
             <div className="row-main">
-              <div className="row-title">{user.email}</div>
-              <div className="row-sub">Signed in on this device</div>
+              <div className="row-title">{displayName(user)}</div>
+              <div className="row-sub">
+                {handle(user) ?? "Signed in with Telegram"}
+              </div>
             </div>
           </div>
         </div>
@@ -131,10 +134,10 @@ export function Settings({ user, onSignOut }: SettingsProps) {
         <div className="list">
           {members.map((member) => (
             <div key={member.id} className="row" style={{ cursor: "default" }}>
-              <div className="avatar">{member.email.slice(0, 2)}</div>
+              <div className="avatar">{initials(member)}</div>
 
               <div className="row-main">
-                <div className="row-title">{member.email}</div>
+                <div className="row-title">{displayName(member)}</div>
                 <div className="row-sub">
                   {member.board_ids.length === 0
                     ? "No boards yet"
@@ -153,7 +156,7 @@ export function Settings({ user, onSignOut }: SettingsProps) {
               {member.role !== "owner" && (
                 <button
                   className="icon-btn"
-                  aria-label={`Remove ${member.email}`}
+                  aria-label={`Remove ${displayName(member)}`}
                   onClick={() => void remove(member)}
                 >
                   <TrashIcon />
@@ -240,10 +243,6 @@ export function Settings({ user, onSignOut }: SettingsProps) {
         </div>
 
         <div className="stack" style={{ marginTop: 16 }}>
-          <button className="btn btn-secondary btn-block" onClick={() => void signOut()}>
-            <LogoutIcon />
-            Sign out
-          </button>
           <button className="btn btn-danger btn-block" onClick={() => void clearData()}>
             Erase local data
           </button>

@@ -5,6 +5,18 @@
    on a desktop works without Telegram being involved at all.
    ============================================================================ */
 
+/** The slice of Telegram's user object the app actually reads. Everything is
+ *  optional on their side except id and first_name: an account need not have a
+ *  @username, a surname, or a visible photo. */
+export interface TgUser {
+  id: number;
+  first_name: string;
+  last_name?: string;
+  username?: string;
+  photo_url?: string;
+  language_code?: string;
+}
+
 interface TgInset {
   top: number;
   bottom: number;
@@ -37,7 +49,8 @@ interface TgWebApp {
   showConfirm?(message: string, cb: (ok: boolean) => void): void;
   openLink?(url: string, options?: { try_instant_view?: boolean }): void;
   openTelegramLink?(url: string): void;
-  initDataUnsafe?: { start_param?: string };
+  initDataUnsafe?: { start_param?: string; user?: TgUser };
+  initData?: string;
   version?: string;
   HapticFeedback?: {
     impactOccurred(style: "light" | "medium" | "heavy"): void;
@@ -342,3 +355,21 @@ export function clearStartParam(): void {
     // sheet is dismissible, this only saves the user one tap on reload.
   }
 }
+
+/* -------------------------------------------------------------- identity --
+
+   Telegram IS the login: the client signs initData with the bot token before
+   the page loads, so by the first frame the app already knows who is using it.
+   There is no sign-in screen to show and nothing for the user to remember.
+
+   initDataUnsafe is the parsed, UNVERIFIED copy - fine for painting a name and
+   an avatar, never for deciding what data someone may see. The signed `initData`
+   string next to it is what goes to the backend in the Authorization header;
+   verify_headers() in backend/app/main.py already checks its HMAC and trusts
+   only the id it recovers. */
+
+export const tgUser: TgUser | null = tg?.initDataUnsafe?.user ?? null;
+
+/** The signed blob to send as `Authorization: tma <initData>` once the data
+ *  layer talks to the backend instead of localStorage. */
+export const initData: string | null = tg?.initData || null;

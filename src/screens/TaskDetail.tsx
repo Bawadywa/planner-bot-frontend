@@ -177,9 +177,9 @@ function CommentRow({
     <div className="comment">
       <div className="comment-head">
         <div className="avatar" style={{ width: 24, height: 24, fontSize: "0.6875rem" }}>
-          {comment.author_email.slice(0, 2)}
+          {comment.author_name.slice(0, 2)}
         </div>
-        <span className="comment-author">{comment.author_email}</span>
+        <span className="comment-author">{comment.author_name}</span>
         <span className="comment-time">{formatWhen(comment.created_at)}</span>
         <div className="spacer" />
         <button

@@ -6,9 +6,16 @@
 
 export type ID = string;
 
+/** Identity comes from Telegram, so there is no email and no password here -
+ *  `id` IS the Telegram user id. Everything but first_name is optional on
+ *  Telegram's side: plenty of accounts have no @username, no surname and no
+ *  visible photo, so every screen has to render without them. */
 export interface User {
-  id: ID;
-  email: string; // String(254) - widen the column, see note in models.py review
+  id: ID; // Telegram user id, kept as a string like every other ID
+  first_name: string;
+  last_name: string | null;
+  username: string | null;
+  photo_url: string | null;
   created_at: string; // ISO 8601
 }
 
@@ -44,17 +51,16 @@ export type MemberStatus = "active" | "invited";
 
 export interface Member {
   id: ID;
-  email: string;
+  user_id: ID; // Telegram user id of the member
+  first_name: string;
+  last_name: string | null;
+  username: string | null;
   role: MemberRole; // maps to the Role model
   status: MemberStatus;
   board_ids: ID[]; // which boards this person was invited to
   created_at: string;
 }
 
-export interface Session {
-  user: User;
-  token: string;
-}
 /** A share-link invite.
  *
  *  Token-based rather than a row pointing at a person, because the share sheet

@@ -10,17 +10,15 @@
    The backend is deliberately not involved yet.
    ============================================================================ */
 
-import type { Board, Comment, ID, Invite, Member, Session, Task, User } from "./types";
+import { tgUser } from "./telegram";
+import { displayName } from "./lib/user";
+import type { Board, Comment, ID, Invite, Member, Task, User } from "./types";
 
 const DB_KEY = "planner.db.v1";
-const SESSION_KEY = "planner.session.v1";
-
-interface StoredUser extends User {
-  password_hash: string;
-}
+const CURRENT_USER_KEY = "planner.current-user.v1";
 
 interface Db {
-  users: StoredUser[];
+  users: User[];
   boards: Board[];
   tasks: Task[];
   comments: Comment[];
@@ -83,127 +81,100 @@ function now(): string {
   return new Date().toISOString();
 }
 
-/* --------------------------------------------------------------- password -- */
+/* --------------------------------------------------------------- identity -- */
 
-/** Mock-only hashing, so a plaintext password never sits in localStorage.
+/** Which user this browser is acting as.
  *
- *  This is NOT how the real thing should work: a browser-side SHA-256 has no
- *  salt and no work factor. When the backend lands, the password goes over TLS
- *  in the request body and argon2id runs server-side, and this function
- *  disappears. */
-async function hashPassword(plain: string): Promise<string> {
-  if (globalThis.crypto?.subtle) {
-    const bytes = new TextEncoder().encode(plain);
-    const digest = await crypto.subtle.digest("SHA-256", bytes);
-    return [...new Uint8Array(digest)]
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-  }
-  // crypto.subtle needs a secure context. Serving the dev build over plain
-  // http:// to a phone on the LAN is the case that lands here.
-  let h = 0x811c9dc5;
-  for (let i = 0; i < plain.length; i++) {
-    h ^= plain.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return `insecure-dev:${h.toString(16)}`;
-}
-
-/* ---------------------------------------------------------------- session -- */
-
-function readSession(): Session | null {
+ *  This is NOT a session and it authenticates nobody. Telegram already did that
+ *  before the page loaded - the client signs initData with the bot token - so
+ *  all that is kept here is which id the launch carried, to scope the mock's
+ *  rows. When the data layer talks to the backend instead, even this goes: the
+ *  id is recovered from the verified initData on every request, by the same
+ *  verify_headers() that backend/app/main.py already runs. */
+function readCurrentUserId(): ID | null {
   try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    return raw ? (JSON.parse(raw) as Session) : null;
+    return localStorage.getItem(CURRENT_USER_KEY);
   } catch {
     return null;
   }
 }
 
-function writeSession(session: Session | null): void {
+function writeCurrentUserId(id: ID): void {
   try {
-    if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    else localStorage.removeItem(SESSION_KEY);
+    localStorage.setItem(CURRENT_USER_KEY, id);
   } catch {
-    /* storage blocked - the session just will not survive a reload */
+    /* storage blocked - signIn() just re-derives it on the next launch */
   }
 }
 
 function requireUser(): User {
-  const session = readSession();
-  if (!session) throw new ApiError(401, "Not signed in");
-  return session.user;
+  const id = readCurrentUserId();
+  const user = id ? readDb().users.find((u) => u.id === id) : null;
+  if (!user) throw new ApiError(401, "No Telegram identity for this launch");
+  return user;
 }
 
-function publicUser(u: StoredUser): User {
-  // Strip password_hash the way a UserRead pydantic schema will: by listing
-  // the fields that may leave, never by deleting the ones that may not.
-  return { id: u.id, email: u.email, created_at: u.created_at };
-}
-
-/* ------------------------------------------------------------------- auth -- */
-
-/** POST /auth/register */
-export async function register(email: string, password: string): Promise<Session> {
-  const clean = email.trim().toLowerCase();
-  if (!clean || !password) throw new ApiError(422, "Email and password required");
-  if (password.length < 8)
-    throw new ApiError(422, "Password must be at least 8 characters");
-
-  const db = readDb();
-  if (db.users.some((u) => u.email === clean))
-    throw new ApiError(409, "That email is already registered");
-
-  const user: StoredUser = {
-    id: uid(),
-    email: clean,
-    created_at: now(),
-    password_hash: await hashPassword(password),
+/** The identity to run as.
+ *
+ *  Outside Telegram - `npm run dev` in a desktop browser - nothing signs a
+ *  user, and refusing to start there would make the app untestable outside a
+ *  phone. So one fixed local identity stands in. It never leaves the browser,
+ *  and a real Telegram launch always wins over it. */
+function launchIdentity(): Omit<User, "created_at"> {
+  if (tgUser) {
+    return {
+      id: String(tgUser.id),
+      first_name: tgUser.first_name,
+      last_name: tgUser.last_name ?? null,
+      username: tgUser.username ?? null,
+      photo_url: tgUser.photo_url ?? null,
+    };
+  }
+  return {
+    id: "local-preview",
+    first_name: "Local",
+    last_name: "Preview",
+    username: null,
+    photo_url: null,
   };
-  db.users.push(user);
+}
 
-  // The first account on a device owns the team.
-  db.members.push({
-    id: uid(),
-    email: clean,
-    role: "owner",
-    status: "active",
-    board_ids: [],
-    created_at: now(),
-  });
+/** POST /user
+ *
+ *  Upsert by Telegram id, which is what create_user() in backend/app/main.py
+ *  already does against the verified id. Called once on launch in place of a
+ *  sign-in screen; the profile fields are refreshed every time, because someone
+ *  can rename themselves in Telegram and the app should follow. */
+export async function signIn(): Promise<User> {
+  const identity = launchIdentity();
+  const db = readDb();
+
+  const existing = db.users.find((u) => u.id === identity.id);
+  const user: User = existing ?? { ...identity, created_at: now() };
+
+  if (existing) {
+    Object.assign(existing, identity);
+  } else {
+    db.users.push(user);
+    // The first identity to open the app on this device owns the team.
+    if (!db.members.some((m) => m.role === "owner")) {
+      db.members.push({
+        id: uid(),
+        user_id: user.id,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        username: user.username,
+        role: "owner",
+        status: "active",
+        board_ids: [],
+        created_at: now(),
+      });
+    }
+  }
 
   writeDb(db);
-  const session: Session = { user: publicUser(user), token: `mock.${user.id}` };
-  writeSession(session);
-  return session;
-}
-
-/** POST /auth/login */
-export async function login(email: string, password: string): Promise<Session> {
-  const clean = email.trim().toLowerCase();
-  const db = readDb();
-  const user = db.users.find((u) => u.email === clean);
-  const candidate = await hashPassword(password);
-
-  // Hash even when the email is unknown, so response time does not reveal
-  // which addresses have accounts. The real handler must do the same.
-  const ok = user ? user.password_hash === candidate : false;
-  if (!user || !ok) throw new ApiError(401, "Wrong email or password");
-
-  const session: Session = { user: publicUser(user), token: `mock.${user.id}` };
-  writeSession(session);
-  return session;
-}
-
-/** POST /auth/logout */
-export async function logout(): Promise<void> {
-  writeSession(null);
-}
-
-/** GET /auth/me - resolves null when signed out, so the shell can pick a
- *  screen without catching. */
-export async function me(): Promise<User | null> {
-  return readSession()?.user ?? null;
+  writeCurrentUserId(user.id);
+  return user;
 }
 
 /* ----------------------------------------------------------------- boards -- */
@@ -213,7 +184,7 @@ export async function listBoards(): Promise<Board[]> {
   const user = requireUser();
   const db = readDb();
   const invited = new Set(
-    db.members.filter((m) => m.email === user.email).flatMap((m) => m.board_ids),
+    db.members.filter((m) => m.user_id === user.id).flatMap((m) => m.board_ids),
   );
   return db.boards
     .filter((b) => b.owner_id === user.id || invited.has(b.id))
@@ -359,18 +330,18 @@ export async function getTask(id: ID): Promise<Task> {
 /* --------------------------------------------------------------- comments -- */
 
 export interface CommentView extends Comment {
-  author_email: string;
+  author_name: string;
 }
 
 /** GET /tasks/{task_id}/comments - joined with the author the way the `author`
  *  relationship on the Comment model will be. */
 export async function listComments(taskId: ID): Promise<CommentView[]> {
   const db = readDb();
-  const byId = new Map(db.users.map((u) => [u.id, u.email]));
+  const byId = new Map(db.users.map((u) => [u.id, displayName(u)]));
   return db.comments
     .filter((c) => c.task_id === taskId)
     .sort((a, b) => a.created_at.localeCompare(b.created_at))
-    .map((c) => ({ ...c, author_email: byId.get(c.author_id) ?? "unknown" }));
+    .map((c) => ({ ...c, author_name: byId.get(c.author_id) ?? "Unknown" }));
 }
 
 /** POST /tasks/{task_id}/comments */
@@ -410,30 +381,6 @@ export async function deleteComment(id: ID): Promise<void> {
 export async function listMembers(): Promise<Member[]> {
   requireUser();
   return readDb().members.sort((a, b) => a.created_at.localeCompare(b.created_at));
-}
-
-/** POST /team/invites */
-export async function inviteMember(email: string, boardIds: ID[]): Promise<Member> {
-  const user = requireUser();
-  const clean = email.trim().toLowerCase();
-  if (!clean.includes("@")) throw new ApiError(422, "Enter a valid email");
-  if (clean === user.email) throw new ApiError(409, "That is your own account");
-
-  const db = readDb();
-  if (db.members.some((m) => m.email === clean))
-    throw new ApiError(409, "Already on the team");
-
-  const member: Member = {
-    id: uid(),
-    email: clean,
-    role: "member",
-    status: "invited",
-    board_ids: boardIds,
-    created_at: now(),
-  };
-  db.members.push(member);
-  writeDb(db);
-  return member;
 }
 
 /** PATCH /team/{id} */
@@ -528,7 +475,7 @@ export async function acceptInvite(token: string): Promise<Invite> {
 
   // Mirrors the membership row the backend would write, so the Team list
   // reflects the accept rather than staying empty.
-  const existing = db.members.find((m) => m.email === user.email);
+  const existing = db.members.find((m) => m.user_id === user.id);
   if (existing) {
     const merged = new Set([...existing.board_ids, ...invite.board_ids]);
     existing.board_ids = [...merged];
@@ -536,7 +483,10 @@ export async function acceptInvite(token: string): Promise<Invite> {
   } else {
     db.members.push({
       id: uid(),
-      email: user.email,
+      user_id: user.id,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      username: user.username,
       role: "member",
       status: "active",
       board_ids: invite.board_ids,
@@ -558,12 +508,15 @@ export async function revokeInvite(id: ID): Promise<void> {
 
 /* ------------------------------------------------------------------ local -- */
 
-/** Wipes the mock database and the session. No endpoint equivalent - this only
- *  exists while the data lives in the browser. */
+/** Wipes the mock database. No endpoint equivalent - this only exists while
+ *  the data lives in the browser.
+ *
+ *  The current-user key goes too, but that only forces the next launch to
+ *  re-derive the identity from Telegram; it cannot sign anyone out. */
 export async function resetLocalData(): Promise<void> {
   try {
     localStorage.removeItem(DB_KEY);
-    localStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(CURRENT_USER_KEY);
   } catch {
     /* nothing we can do if storage is blocked */
   }

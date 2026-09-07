@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import * as api from "./api";
-import { Auth } from "./screens/Auth";
 import { Boards } from "./screens/Boards";
 import { Board } from "./screens/Board";
 import { TaskDetail } from "./screens/TaskDetail";
@@ -19,8 +18,10 @@ type Tab = "boards" | "calendar" | "settings";
 type Pushed = { name: "board"; boardId: ID } | { name: "task"; taskId: ID };
 
 export function App() {
-  // undefined = still checking, null = signed out
-  const [user, setUser] = useState<User | null | undefined>(undefined);
+  // undefined only while the launch identity is being resolved - there is no
+  // signed-out state to model, because Telegram identifies the user before the
+  // page loads. See signIn() in api.ts.
+  const [user, setUser] = useState<User | undefined>(undefined);
   const [tab, setTab] = useState<Tab>("boards");
   const [stack, setStack] = useState<Pushed[]>([]);
   // Read from the launch URL once, at module load - see telegram.ts. Null as
@@ -28,7 +29,7 @@ export function App() {
   const [inviteToken, setInviteToken] = useState<string | null>(startInviteToken);
 
   useEffect(() => {
-    void api.me().then((u) => setUser(u ?? null));
+    void api.signIn().then(setUser);
   }, []);
 
   // Telegram's back arrow pops the stack whenever something is pushed. Sheets
@@ -47,15 +48,7 @@ export function App() {
     setTab(next);
   }
 
-  if (user === undefined) return <div className="app" />;
-
-  if (!user) {
-    return (
-      <div className="app">
-        <Auth onAuthed={setUser} />
-      </div>
-    );
-  }
+  if (!user) return <div className="app" />;
 
   const top = stack[stack.length - 1];
 
@@ -76,10 +69,11 @@ export function App() {
       ) : (
         <Settings
           user={user}
-          onSignOut={() => {
+          onReset={() => {
             setStack([]);
             setTab("boards");
-            setUser(null);
+            // The wipe took the identity row with it; re-derive from Telegram.
+            void api.signIn().then(setUser);
           }}
         />
       )}
