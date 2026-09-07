@@ -55,3 +55,18 @@ export interface Session {
   user: User;
   token: string;
 }
+/** A share-link invite.
+ *
+ *  Token-based rather than a row pointing at a person, because the share sheet
+ *  never tells the app who the sender picked - the link is what identifies the
+ *  invite, and the invitee becomes known only when they open it. `board_ids`
+ *  is what the token grants on accept. */
+export interface Invite {
+  id: ID;
+  token: string; // "inv_" + 16 url-safe chars
+  board_ids: ID[];
+  created_by: ID;
+  created_at: string;
+  accepted_by: ID | null;
+  accepted_at: string | null;
+}

@@ -11,9 +11,16 @@
    DATA_SOURCE
              'local'  - everything lives in this browser's localStorage (today)
              'api'    - talk to API_BASE over HTTP (once the endpoints exist)
+
+   BOT_USERNAME
+             The bot's @username WITHOUT the @, exactly as BotFather shows it
+             (letters, digits and underscores only - no hyphens). Invite links
+             are built as t.me/<BOT_USERNAME>?startapp=<token>, so a wrong value
+             here produces a link that opens a "user not found" page.
    ============================================================================ */
 window.APP_CONFIG = {
   API_BASE: "",
   DATA_SOURCE: "local",
+  BOT_USERNAME: "planner_bot",
   DEBUG: false,
 };

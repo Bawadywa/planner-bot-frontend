@@ -6,8 +6,9 @@ import { Board } from "./screens/Board";
 import { TaskDetail } from "./screens/TaskDetail";
 import { Calendar } from "./screens/Calendar";
 import { Settings } from "./screens/Settings";
+import { InviteAccept } from "./screens/InviteAccept";
 import { BoardIcon, CalendarIcon, SettingsIcon } from "./components/Icons";
-import { haptic, pushBack } from "./telegram";
+import { clearStartParam, haptic, pushBack, startInviteToken } from "./telegram";
 import type { ID, User } from "./types";
 
 type Tab = "boards" | "calendar" | "settings";
@@ -22,6 +23,9 @@ export function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [tab, setTab] = useState<Tab>("boards");
   const [stack, setStack] = useState<Pushed[]>([]);
+  // Read from the launch URL once, at module load - see telegram.ts. Null as
+  // soon as the sheet is dismissed, so it never re-opens on a tab switch.
+  const [inviteToken, setInviteToken] = useState<string | null>(startInviteToken);
 
   useEffect(() => {
     void api.me().then((u) => setUser(u ?? null));
@@ -103,6 +107,16 @@ export function App() {
           <span className="label">Settings</span>
         </button>
       </nav>
+
+      {inviteToken && (
+        <InviteAccept
+          token={inviteToken}
+          onDone={() => {
+            setInviteToken(null);
+            clearStartParam();
+          }}
+        />
+      )}
     </div>
   );
 }

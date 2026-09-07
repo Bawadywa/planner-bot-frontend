@@ -2,9 +2,27 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import * as api from "../api";
 import { Sheet } from "../components/Sheet";
 import { PoweredBy } from "../components/PoweredBy";
-import { LogoutIcon, PlusIcon, TrashIcon } from "../components/Icons";
-import { confirmAction, haptic, hapticError } from "../telegram";
-import type { Board, ID, Member, User } from "../types";
+import { LogoutIcon, PlusIcon, SendIcon, TrashIcon } from "../components/Icons";
+import {
+  botUsername,
+  confirmAction,
+  haptic,
+  hapticError,
+  inviteLink,
+  shareToTelegram,
+} from "../telegram";
+import type { Board, ID, Invite, Member, User } from "../types";
+
+/** The line that rides along with the link in the shared message. Telegram
+ *  shows it next to the link preview, so it has to make sense on its own -
+ *  the recipient sees it before they know what Planner is. */
+function inviteText(boardTitles: string[]): string {
+  const what =
+    boardTitles.length === 1
+      ? `"${boardTitles[0]}"`
+      : `${boardTitles.length} boards`;
+  return `Join me on ${what} in Planner`;
+}
 
 interface SettingsProps {
   user: User;
@@ -14,13 +32,19 @@ interface SettingsProps {
 export function Settings({ user, onSignOut }: SettingsProps) {
   const [members, setMembers] = useState<Member[]>([]);
   const [boards, setBoards] = useState<Board[]>([]);
+  const [invites, setInvites] = useState<Invite[]>([]);
   const [inviting, setInviting] = useState(false);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const [m, b] = await Promise.all([api.listMembers(), api.listBoards()]);
+    const [m, b, i] = await Promise.all([
+      api.listMembers(),
+      api.listBoards(),
+      api.listInvites(),
+    ]);
     setMembers(m);
     setBoards(b);
+    setInvites(i);
   }, []);
 
   useEffect(() => {
@@ -38,6 +62,24 @@ export function Settings({ user, onSignOut }: SettingsProps) {
       hapticError();
       setError(err instanceof Error ? err.message : "Could not remove them.");
     }
+  }
+
+  function shareAgain(invite: Invite) {
+    haptic();
+    const titles = invite.board_ids
+      .map((id) => boards.find((b) => b.id === id)?.title)
+      .filter((t): t is string => Boolean(t));
+    shareToTelegram(inviteLink(invite.token), inviteText(titles));
+  }
+
+  async function revoke(invite: Invite) {
+    const ok = await confirmAction(
+      "Revoke this link? Anyone who already has it will not be able to join.",
+    );
+    if (!ok) return;
+    await api.revokeInvite(invite.id);
+    haptic("medium");
+    await load();
   }
 
   async function signOut() {
@@ -137,6 +179,51 @@ export function Settings({ user, onSignOut }: SettingsProps) {
           </div>
         )}
 
+        {invites.length > 0 && (
+          <>
+            <div className="section-head" style={{ marginTop: 24 }}>
+              <h2>Invite links</h2>
+              <span className="count">{invites.length}</span>
+            </div>
+
+            <div className="list">
+              {invites.map((invite) => (
+                <div key={invite.id} className="row" style={{ cursor: "default" }}>
+                  <div className="row-main">
+                    <div className="row-title">
+                      {invite.board_ids.map(boardName).filter(Boolean).join(", ") ||
+                        "Board deleted"}
+                    </div>
+                    <div className="row-sub" style={{ wordBreak: "break-all" }}>
+                      {inviteLink(invite.token)}
+                    </div>
+                  </div>
+
+                  {invite.accepted_at ? (
+                    <span className="tag">used</span>
+                  ) : (
+                    <button
+                      className="icon-btn"
+                      aria-label="Share this link again"
+                      onClick={() => shareAgain(invite)}
+                    >
+                      <SendIcon />
+                    </button>
+                  )}
+
+                  <button
+                    className="icon-btn"
+                    aria-label="Revoke this link"
+                    onClick={() => void revoke(invite)}
+                  >
+                    <TrashIcon />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
         <div className="section-head" style={{ marginTop: 24 }}>
           <h2>Data</h2>
         </div>
@@ -190,7 +277,6 @@ function InviteSheet({
   onClose: () => void;
   onInvited: () => void | Promise<void>;
 }) {
-  const [email, setEmail] = useState("");
   const [picked, setPicked] = useState<ID[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -199,6 +285,9 @@ function InviteSheet({
     setPicked((prev) => (prev.includes(id) ? prev.filter((b) => b !== id) : [...prev, id]));
   }
 
+  /* Mint the token first, then hand the link to Telegram. The sheet closes
+     either way: on a real client the share sheet is already on top of it, and
+     in a browser the link is waiting in the Invite links list. */
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (busy) return;
@@ -206,38 +295,29 @@ function InviteSheet({
     setBusy(true);
     setError("");
     try {
-      await api.inviteMember(email, picked);
+      const invite = await api.createInvite(picked);
+      const titles = boards.filter((b) => picked.includes(b.id)).map((b) => b.title);
+      shareToTelegram(inviteLink(invite.token), inviteText(titles));
       haptic("medium");
       await onInvited();
     } catch (err) {
       hapticError();
-      setError(err instanceof Error ? err.message : "Could not send the invite.");
+      setError(err instanceof Error ? err.message : "Could not create the invite.");
       setBusy(false);
     }
   }
 
   return (
-    <Sheet title="Invite to the team" onClose={onClose}>
+    <Sheet title="Invite to a board" onClose={onClose}>
       <form onSubmit={submit}>
         {error && <div className="error">{error}</div>}
 
-        <label className="field">
-          <div className="label">
-            <span>Email</span>
+        {!botUsername && (
+          <div className="error">
+            BOT_USERNAME is not set in config.js — the link will point at
+            t.me/?startapp=… and open nothing.
           </div>
-          <input
-            className="input"
-            type="email"
-            inputMode="email"
-            autoCapitalize="none"
-            autoCorrect="off"
-            placeholder="teammate@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            maxLength={254}
-            autoFocus
-          />
-        </label>
+        )}
 
         <div className="field">
           <div className="label">
@@ -260,16 +340,18 @@ function InviteSheet({
         </div>
 
         <div className="hint" style={{ marginBottom: 14 }}>
-          No email is actually sent yet — the invite is recorded locally so the
-          team list and per-board access are real once the backend exists.
+          Telegram opens its own share sheet next — search, recent chats and
+          contacts — and sends the link from you. Nothing leaves this device
+          until you pick someone there.
         </div>
 
         <button
           type="submit"
           className="btn btn-primary btn-block"
-          disabled={busy || !email.trim() || picked.length === 0}
+          disabled={busy || picked.length === 0}
         >
-          Send invite
+          <SendIcon />
+          Choose a chat in Telegram
         </button>
       </form>
     </Sheet>

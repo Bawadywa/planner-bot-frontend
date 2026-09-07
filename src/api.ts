@@ -10,7 +10,7 @@
    The backend is deliberately not involved yet.
    ============================================================================ */
 
-import type { Board, Comment, ID, Member, Session, Task, User } from "./types";
+import type { Board, Comment, ID, Invite, Member, Session, Task, User } from "./types";
 
 const DB_KEY = "planner.db.v1";
 const SESSION_KEY = "planner.session.v1";
@@ -25,6 +25,7 @@ interface Db {
   tasks: Task[];
   comments: Comment[];
   members: Member[];
+  invites: Invite[];
 }
 
 const EMPTY_DB: Db = {
@@ -33,6 +34,7 @@ const EMPTY_DB: Db = {
   tasks: [],
   comments: [],
   members: [],
+  invites: [],
 };
 
 /** Mirrors an HTTP failure so screens can branch on `status` exactly as they
@@ -450,6 +452,107 @@ export async function removeMember(id: ID): Promise<void> {
   const member = db.members.find((m) => m.id === id);
   if (member?.role === "owner") throw new ApiError(403, "The owner cannot be removed");
   db.members = db.members.filter((m) => m.id !== id);
+  writeDb(db);
+}
+
+/* ---------------------------------------------------------------- invites -- */
+
+/** URL-safe, ~96 bits of entropy, namespaced so telegram.ts can tell an invite
+ *  start_param apart from any other deep link the app grows later.
+ *
+ *  Real tokens get minted server-side; this only has to be unguessable enough
+ *  that a demo link is not a shared secret sitting in a chat log. */
+function inviteToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  const b64 = btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  return `inv_${b64}`;
+}
+
+/** POST /invites */
+export async function createInvite(boardIds: ID[]): Promise<Invite> {
+  const user = requireUser();
+  if (boardIds.length === 0) throw new ApiError(422, "Pick at least one board");
+
+  const db = readDb();
+  const invite: Invite = {
+    id: uid(),
+    token: inviteToken(),
+    board_ids: boardIds,
+    created_by: user.id,
+    created_at: now(),
+    accepted_by: null,
+    accepted_at: null,
+  };
+  db.invites.push(invite);
+  writeDb(db);
+  return invite;
+}
+
+/** GET /invites - newest first, unaccepted ones on top. */
+export async function listInvites(): Promise<Invite[]> {
+  requireUser();
+  return readDb().invites.sort((a, b) => {
+    if (!a.accepted_at !== !b.accepted_at) return a.accepted_at ? 1 : -1;
+    return b.created_at.localeCompare(a.created_at);
+  });
+}
+
+/** GET /invites/{token}
+ *
+ *  Null rather than a 404 throw, because "no such token" is a normal outcome
+ *  here, not a failure: the store is this browser's localStorage, so a link
+ *  opened on the recipient's phone can never resolve. The accept screen says so
+ *  in as many words instead of showing an error. */
+export async function getInvite(token: string): Promise<Invite | null> {
+  return readDb().invites.find((i) => i.token === token) ?? null;
+}
+
+/** POST /invites/{token}/accept
+ *
+ *  Single-use: the token is spent by the first person through it. Accepting an
+ *  invite you created yourself is allowed on purpose - on one device that is
+ *  the only way to see the round trip at all. */
+export async function acceptInvite(token: string): Promise<Invite> {
+  const user = requireUser();
+
+  const db = readDb();
+  const invite = db.invites.find((i) => i.token === token);
+  if (!invite) throw new ApiError(404, "That invite link is no longer valid");
+  if (invite.accepted_at) throw new ApiError(409, "That invite has already been used");
+
+  invite.accepted_by = user.id;
+  invite.accepted_at = now();
+
+  // Mirrors the membership row the backend would write, so the Team list
+  // reflects the accept rather than staying empty.
+  const existing = db.members.find((m) => m.email === user.email);
+  if (existing) {
+    const merged = new Set([...existing.board_ids, ...invite.board_ids]);
+    existing.board_ids = [...merged];
+    existing.status = "active";
+  } else {
+    db.members.push({
+      id: uid(),
+      email: user.email,
+      role: "member",
+      status: "active",
+      board_ids: invite.board_ids,
+      created_at: now(),
+    });
+  }
+
+  writeDb(db);
+  return invite;
+}
+
+/** DELETE /invites/{id} */
+export async function revokeInvite(id: ID): Promise<void> {
+  requireUser();
+  const db = readDb();
+  db.invites = db.invites.filter((i) => i.id !== id);
   writeDb(db);
 }
 

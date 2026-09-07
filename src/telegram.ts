@@ -36,6 +36,9 @@ interface TgWebApp {
   disableVerticalSwipes?(): void;
   showConfirm?(message: string, cb: (ok: boolean) => void): void;
   openLink?(url: string, options?: { try_instant_view?: boolean }): void;
+  openTelegramLink?(url: string): void;
+  initDataUnsafe?: { start_param?: string };
+  version?: string;
   HapticFeedback?: {
     impactOccurred(style: "light" | "medium" | "heavy"): void;
     notificationOccurred(type: "error" | "success" | "warning"): void;
@@ -45,7 +48,12 @@ interface TgWebApp {
 declare global {
   interface Window {
     Telegram?: { WebApp?: TgWebApp };
-    APP_CONFIG?: { API_BASE: string; DATA_SOURCE: "local" | "api"; DEBUG: boolean };
+    APP_CONFIG?: {
+      API_BASE: string;
+      DATA_SOURCE: "local" | "api";
+      BOT_USERNAME: string;
+      DEBUG: boolean;
+    };
   }
 }
 
@@ -235,4 +243,102 @@ export function haptic(style: "light" | "medium" | "heavy" = "light"): void {
 
 export function hapticError(): void {
   tg?.HapticFeedback?.notificationOccurred("error");
+}
+
+/* ----------------------------------------------------------------- invites --
+
+   Sharing an invite hands the job to Telegram's own share sheet rather than
+   building a contact picker in here - a bot is never given the user's contact
+   list, so a picker of our own could only ever be a list of people who already
+   use the app. `t.me/share/url` opens the same sheet the client uses to forward
+   a message: search, recent chats, contacts, multi-select.
+
+   The upgrade path is WebApp.shareMessage() (Bot API 8.0), which sends a proper
+   card with a "Join board" button instead of a link preview. It needs the
+   backend to mint a prepared_message_id first, so it stays behind this seam:
+   only shareToTelegram() changes when that lands. */
+
+/** The bot's @username, normalised - config may or may not include the @. */
+export const botUsername = String(window.APP_CONFIG?.BOT_USERNAME ?? "")
+  .trim()
+  .replace(/^@/, "");
+
+/** A link that opens THIS Mini App with the token attached.
+ *
+ *  `?startapp=` (not `?start=`) is what jumps straight into the app instead of
+ *  landing in the bot chat first; Telegram then hands the value back as
+ *  initDataUnsafe.start_param. It requires the bot to have a Main Mini App set
+ *  in BotFather - without one the link opens the chat, which is why the bot
+ *  also answers /start with the same token. */
+export function inviteLink(token: string): string {
+  return `https://t.me/${botUsername}?startapp=${encodeURIComponent(token)}`;
+}
+
+/** Opens Telegram's native "Share to…" sheet on `url`.
+ *
+ *  Returns true when the native sheet was used, false when it fell back to a
+ *  plain browser tab (desktop `npm run dev`, where there is no client to ask).
+ *
+ *  Note for old clients: up to Bot API 7.0 openTelegramLink CLOSED the Mini App
+ *  on the way out, so the share sheet appears but the app is gone behind it.
+ *  From 7.0 on the app stays open underneath. Nothing can be done about it from
+ *  here - it is a reason to prefer shareMessage() eventually, not a bug. */
+export function shareToTelegram(url: string, text: string): boolean {
+  const share =
+    `https://t.me/share/url?url=${encodeURIComponent(url)}` +
+    `&text=${encodeURIComponent(text)}`;
+
+  if (tg?.openTelegramLink) {
+    tg.openTelegramLink(share);
+    return true;
+  }
+  window.open(share, "_blank", "noopener");
+  return false;
+}
+
+/** The launch parameter this session arrived with, or null.
+ *
+ *  Three places have to be checked because three different entry points put it
+ *  somewhere different:
+ *    - initDataUnsafe.start_param - t.me/<bot>?startapp=<token>
+ *    - #tgWebAppStartParam        - the same launch, straight off the URL, which
+ *                                   is also what survives a reload
+ *    - ?startapp= / ?inv=         - a WebApp keyboard button, whose URL we build
+ *                                   ourselves (Telegram does NOT forward the
+ *                                   /start payload into it), and hand-typing it
+ *                                   in a browser while developing
+ *
+ *  Read once at module load: Telegram does not update these after launch, and a
+ *  later read would race the history.replaceState below. */
+function findStartParam(): string | null {
+  const fromInitData = tg?.initDataUnsafe?.start_param;
+  if (fromInitData) return fromInitData;
+
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const fromHash = hash.get("tgWebAppStartParam");
+  if (fromHash) return fromHash;
+
+  const query = new URLSearchParams(window.location.search);
+  return query.get("startapp") ?? query.get("inv");
+}
+
+export const startParam: string | null = findStartParam();
+
+/** Invite tokens are namespaced so a start_param can carry other things later
+ *  (a deep link to one task, say) without the accept flow grabbing it. */
+export const INVITE_PREFIX = "inv_";
+
+export const startInviteToken: string | null =
+  startParam && startParam.startsWith(INVITE_PREFIX) ? startParam : null;
+
+/** Drops the token from the address bar once it has been handled, so a reload
+ *  does not re-open the accept sheet on an invite already dealt with. */
+export function clearStartParam(): void {
+  if (!window.location.search && !window.location.hash) return;
+  try {
+    window.history.replaceState(null, "", window.location.pathname);
+  } catch {
+    // Some webviews refuse replaceState on a non-http origin. Harmless: the
+    // sheet is dismissible, this only saves the user one tap on reload.
+  }
 }
