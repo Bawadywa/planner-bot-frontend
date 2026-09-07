@@ -17,6 +17,10 @@ import type { Board, ID, Invite, Member, User } from "../types";
 /** The line that rides along with the link in the shared message. Telegram
  *  shows it next to the link preview, so it has to make sense on its own -
  *  the recipient sees it before they know what Planner is. */
+const FALLBACK_NOTE =
+  "Telegram's share sheet is only available inside the Telegram app — the link " +
+  "opened in a browser tab instead. It is listed below, ready to copy.";
+
 function inviteText(boardTitles: string[]): string {
   const what =
     boardTitles.length === 1
@@ -39,6 +43,9 @@ export function Settings({ user, onReset }: SettingsProps) {
   const [invites, setInvites] = useState<Invite[]>([]);
   const [inviting, setInviting] = useState(false);
   const [error, setError] = useState("");
+  // Set when a share could not use Telegram's own sheet, which otherwise looks
+  // exactly like a button that does nothing.
+  const [note, setNote] = useState("");
 
   const load = useCallback(async () => {
     const [m, b, i] = await Promise.all([
@@ -73,7 +80,8 @@ export function Settings({ user, onReset }: SettingsProps) {
     const titles = invite.board_ids
       .map((id) => boards.find((b) => b.id === id)?.title)
       .filter((t): t is string => Boolean(t));
-    shareToTelegram(inviteLink(invite.token), inviteText(titles));
+    const shared = shareToTelegram(inviteLink(invite.token), inviteText(titles));
+    setNote(shared ? "" : FALLBACK_NOTE);
   }
 
   async function revoke(invite: Invite) {
@@ -189,6 +197,8 @@ export function Settings({ user, onReset }: SettingsProps) {
               <span className="count">{invites.length}</span>
             </div>
 
+            {note && <div className="hint" style={{ marginBottom: 8 }}>{note}</div>}
+
             <div className="list">
               {invites.map((invite) => (
                 <div key={invite.id} className="row" style={{ cursor: "default" }}>
@@ -255,8 +265,9 @@ export function Settings({ user, onReset }: SettingsProps) {
         <InviteSheet
           boards={boards}
           onClose={() => setInviting(false)}
-          onInvited={async () => {
+          onInvited={async (sharedNatively) => {
             setInviting(false);
+            setNote(sharedNatively ? "" : FALLBACK_NOTE);
             await load();
           }}
         />
@@ -274,7 +285,7 @@ function InviteSheet({
 }: {
   boards: Board[];
   onClose: () => void;
-  onInvited: () => void | Promise<void>;
+  onInvited: (sharedNatively: boolean) => void | Promise<void>;
 }) {
   const [picked, setPicked] = useState<ID[]>([]);
   const [error, setError] = useState("");
@@ -296,9 +307,9 @@ function InviteSheet({
     try {
       const invite = await api.createInvite(picked);
       const titles = boards.filter((b) => picked.includes(b.id)).map((b) => b.title);
-      shareToTelegram(inviteLink(invite.token), inviteText(titles));
+      const shared = shareToTelegram(inviteLink(invite.token), inviteText(titles));
       haptic("medium");
-      await onInvited();
+      await onInvited(shared);
     } catch (err) {
       hapticError();
       setError(err instanceof Error ? err.message : "Could not create the invite.");

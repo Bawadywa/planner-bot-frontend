@@ -139,6 +139,40 @@ function launchIdentity(): Omit<User, "created_at"> {
   };
 }
 
+/** Adopts rows left behind by the email-account build.
+ *
+ *  Identity used to be a random uuid minted at sign-up; it is the Telegram user
+ *  id now. Every board, comment and invite created before the switch still
+ *  points at that dead uuid, so listBoards() filters them all out and the app
+ *  looks freshly wiped - with no boards, even the invite button greys out.
+ *
+ *  A legacy user row is the one with no first_name, since the field did not
+ *  exist before. Legacy member rows were keyed by email and have no user_id at
+ *  all, so they are dropped here and signIn() rebuilds the owner row.
+ *
+ *  Runs on every launch but does nothing once there is no legacy row left, so
+ *  it can stay until the mock itself goes. */
+function adoptLegacyRows(db: Db, owner: ID): void {
+  const legacy = new Set(db.users.filter((u) => !u.first_name).map((u) => u.id));
+  if (legacy.size === 0) return;
+
+  db.users = db.users.filter((u) => !legacy.has(u.id));
+  db.members = db.members.filter((m) => Boolean(m.user_id));
+
+  for (const board of db.boards) {
+    if (legacy.has(board.owner_id)) board.owner_id = owner;
+  }
+  for (const comment of db.comments) {
+    if (legacy.has(comment.author_id)) comment.author_id = owner;
+  }
+  for (const invite of db.invites) {
+    if (legacy.has(invite.created_by)) invite.created_by = owner;
+    if (invite.accepted_by && legacy.has(invite.accepted_by)) {
+      invite.accepted_by = owner;
+    }
+  }
+}
+
 /** POST /user
  *
  *  Upsert by Telegram id, which is what create_user() in backend/app/main.py
@@ -148,6 +182,8 @@ function launchIdentity(): Omit<User, "created_at"> {
 export async function signIn(): Promise<User> {
   const identity = launchIdentity();
   const db = readDb();
+
+  adoptLegacyRows(db, identity.id);
 
   const existing = db.users.find((u) => u.id === identity.id);
   const user: User = existing ?? { ...identity, created_at: now() };
