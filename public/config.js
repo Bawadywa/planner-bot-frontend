@@ -21,6 +21,6 @@
 window.APP_CONFIG = {
   API_BASE: "",
   DATA_SOURCE: "local",
-  BOT_USERNAME: "test_797_bot",
+  BOT_USERNAME: "lycee_planner_bot",
   DEBUG: false,
 };
