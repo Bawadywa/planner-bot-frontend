@@ -15,13 +15,8 @@
 import { tgUser } from "../telegram";
 import { displayName } from "../lib/user";
 import { ApiError } from "../lib/http";
-import {
-  byUrgency,
-  DEFAULT_PRIORITY,
-  priorityOf,
-  toPriorityCode,
-  type PriorityCode,
-} from "../lib/priority";
+import { DEFAULT_PRIORITY, toPriorityCode, type PriorityCode } from "../lib/priority";
+import { boardOrder } from "../lib/taskOrder";
 import type { Board, Comment, ID, Invite, Member, Task, User } from "../types";
 
 const DB_KEY = "planner.db.v1";
@@ -314,20 +309,7 @@ export interface TaskInput {
 export async function listTasks(boardId: ID): Promise<Task[]> {
   return readDb()
     .tasks.filter((t) => t.board_id === boardId)
-    .sort((a, b) => {
-      if (a.done !== b.done) return a.done ? 1 : -1; // open work first
-      // Then soonest deadline; tasks with no deadline sink to the bottom.
-      // Deadline outranks priority on purpose - something due tomorrow is more
-      // urgent than a "high" with no date - so priority only breaks the tie,
-      // which for undated tasks is every comparison.
-      const ad = a.deadline ?? "9999-12-31";
-      const bd = b.deadline ?? "9999-12-31";
-      return (
-        ad.localeCompare(bd) ||
-        byUrgency(priorityOf(a.priority_code).code, priorityOf(b.priority_code).code) ||
-        a.created_at.localeCompare(b.created_at)
-      );
-    });
+    .sort(boardOrder);
 }
 
 /** GET /tasks - every task on the given boards, for the calendar.

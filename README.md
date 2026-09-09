@@ -27,6 +27,8 @@ src/
   api/local.ts      localStorage implementation
   api/remote.ts     HTTP implementation, one function per real endpoint
   lib/http.ts       fetch, auth header, error mapping, defensive field readers
+  lib/taskOrder.ts  the board's sort order, shared so the two halves cannot drift
+  lib/priority.ts   priority codes, mirroring the backend's priorities.json
   types.ts          shapes mirroring backend/app/models.py
   telegram.ts       Mini App glue: insets, viewport, back-button stack, haptics
   lib/date.ts       deadline maths ("YYYY-MM-DD", no timezone shifts)
@@ -48,7 +50,8 @@ at all.
 | boards   | server   | `GET /taskboards`, `POST /taskboard` — read and create only       |
 | ↳ rename | —        | needs `PATCH /taskboard`; raises 501 until then (no UI calls it)   |
 | ↳ delete | server   | `DELETE /taskboard` (id in the body); sweeps local tasks too       |
-| tasks    | browser  | needs `GET /taskboards/{id}/tasks`, `PATCH` + `DELETE /tasks/{id}`|
+| tasks    | server   | `GET /tasks?board_id=`, `GET`/`POST`/`PUT`/`DELETE /task`          |
+| ↳ done   | server   | `done` column, set on create and update                            |
 | comments | browser  | needs `GET` + `POST /tasks/{id}/comments`, `DELETE /comments/{id}`|
 | team     | browser  | needs `GET /team`, `PATCH` + `DELETE /team/{id}`                  |
 | invites  | browser  | needs `POST` + `GET /invites`, `GET` + `POST /invites/{token}`    |

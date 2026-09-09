@@ -8,23 +8,21 @@
 
    Endpoints this file uses, exactly as main.py declares them:
 
-     POST /user          -> the User row for the verified Telegram id
-     GET  /taskboards    -> list[TaskBoardRead], filtered by ?user_id
-     POST /taskboard     -> the TaskBoard row, from {title}
-     GET  /health        -> 200, empty body
+     POST   /user        -> the User row for the verified Telegram id
+     GET    /taskboards  -> list[TaskBoardRead], filtered by ?user_id
+     POST   /taskboard   -> the TaskBoard row, from {title}
+     DELETE /taskboard   -> {id} in the body
+     GET    /tasks       -> list[TaskRead], filtered by ?board_id
+     GET    /task        -> one TaskRead, by ?id
+     POST   /task        -> the created TaskRead
+     PUT    /task        -> the updated TaskRead, every field replaced
+     DELETE /task        -> {id} in the body
+     GET    /health      -> 200, empty body
 
-   Deliberately not used, and why:
-
-     GET /task           takes its id in a Pydantic BODY on a GET, which a
-                         browser cannot send - fetch drops a body on GET, so
-                         the request would arrive with none and 422.
-
-   Everything else the UI needs (listing tasks on a board, editing or deleting
-   one, comments, team, invites) has no route yet, so api/index.ts leaves those
-   features on the local store. `missing()` below is what the two board routes
-   that DO have a local twin but no server one raise instead - a rename or a
-   delete must not silently succeed against a copy the server will hand back
-   again on the next load.
+   Comments, team and invites have no routes yet, so api/index.ts leaves those
+   on the local store. `missing()` below is what a UI action with a local twin
+   but no server route raises instead - it must not silently succeed against a
+   copy the server will hand back again on the next load.
    ============================================================================ */
 
 import { tgUser } from "../telegram";
@@ -39,8 +37,10 @@ import {
   request,
   type Raw,
 } from "../lib/http";
-import type { Board, ID } from "../types";
-import type { Identity } from "./local";
+import { toPriorityCode } from "../lib/priority";
+import { boardOrder } from "../lib/taskOrder";
+import type { Board, ID, Task } from "../types";
+import type { Identity, TaskInput } from "./local";
 
 /** Raised for a UI action the backend has no route for. 501 rather than 404:
  *  the resource exists, the verb does not. The screens already show
@@ -186,6 +186,107 @@ export async function renameBoard(_id: ID, _title: string): Promise<Board> {
  *  The answer is ignored - there is nothing left to show. */
 export async function deleteBoard(id: ID): Promise<void> {
   await request<unknown>("DELETE", "/taskboard", { body: { id: numericId(id) } });
+}
+
+/* ------------------------------------------------------------------ tasks -- */
+
+/** TaskRead nests the whole board rather than carrying a board_id, so the
+ *  parent is read back out of it. It also has no created_at column, so that
+ *  falls to the epoch - harmless, because listTasks() orders by deadline and
+ *  priority and only uses created_at to break a remaining tie, and the server
+ *  already returns rows in creation order.
+ *
+ *  `done` IS read here, so the client is ready the moment the routes carry it.
+ *  Whether the checkbox is shown is a separate question - see the `taskDone`
+ *  entry in api/index.ts. */
+function toTask(raw: Raw): Task | null {
+  const id = asId(raw.id);
+  const boardId = asId(asRaw(raw.board).id);
+  if (!id || !boardId) return null;
+
+  return {
+    id,
+    board_id: boardId,
+    title: asString(raw.title),
+    description: asString(raw.description),
+    deadline: typeof raw.deadline === "string" ? raw.deadline : null,
+    image: typeof raw.image === "string" ? raw.image : null,
+    done: raw.done === true,
+    priority_code: toPriorityCode(
+      typeof raw.priority_code === "number" ? raw.priority_code : null,
+    ),
+    created_at: asIso(raw.created_at),
+  };
+}
+
+/** The fields POST and PUT share. Every Optional field on TaskCreate and
+ *  TaskUpdate is declared without a default, which in Pydantic v2 means
+ *  REQUIRED - so each one is sent explicitly, nulls included.
+ *
+ *  `done` is not among them: TaskCreate has no such field (a new task is never
+ *  done), while TaskUpdate does, so it is added by updateTask alone. */
+function taskBody(input: TaskInput): Raw {
+  return {
+    title: input.title.trim().slice(0, 60),
+    description: input.description.trim().slice(0, 100),
+    deadline: input.deadline || null,
+    image: input.image,
+    priority_code: toPriorityCode(input.priority_code),
+  };
+}
+
+/** GET /tasks?board_id=
+ *
+ *  Re-sorted rather than taken as it comes: the route orders by created_at,
+ *  and the board screen wants open work first, then by deadline. */
+export async function listTasks(boardId: ID): Promise<Task[]> {
+  const rows = await get<unknown>("/tasks", { board_id: numericId(boardId) });
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => toTask(asRaw(row)))
+    .filter((task): task is Task => task !== null)
+    .sort(boardOrder);
+}
+
+/** GET /task?id= */
+export async function getTask(id: ID): Promise<Task> {
+  const task = toTask(asRaw(await get<unknown>("/task", { id: numericId(id) })));
+  if (!task) throw new ApiError(404, "Task not found");
+  return task;
+}
+
+/** POST /task */
+export async function createTask(boardId: ID, input: TaskInput): Promise<Task> {
+  const title = input.title.trim();
+  if (!title) throw new ApiError(422, "Title required");
+
+  const body = { ...taskBody(input), board_id: numericId(boardId) };
+  const task = toTask(asRaw(await post<unknown>("/task", body)));
+  if (!task) throw new ApiError(502, "The server returned a task with no id.");
+  return task;
+}
+
+/** PUT /task
+ *
+ *  The route replaces every field from the body rather than merging, so a
+ *  partial patch has to be completed first - which is what the callers pass.
+ *  Read-then-write is a race in principle; with one Telegram user per account
+ *  editing one task at a time, it is not one in practice. */
+export async function updateTask(
+  id: ID,
+  patch: Partial<Omit<Task, "id" | "board_id" | "created_at">>,
+): Promise<Task> {
+  const current = await getTask(id);
+  const merged = { ...current, ...patch };
+
+  const body = { ...taskBody(merged), id: numericId(id), done: merged.done };
+  const task = toTask(asRaw(await request<unknown>("PUT", "/task", { body })));
+  if (!task) throw new ApiError(502, "The server returned a task with no id.");
+  return task;
+}
+
+/** DELETE /task - the id travels in the body, as the route declares. */
+export async function deleteTask(id: ID): Promise<void> {
+  await request<unknown>("DELETE", "/task", { body: { id: numericId(id) } });
 }
 
 /* ----------------------------------------------------------------- health -- */

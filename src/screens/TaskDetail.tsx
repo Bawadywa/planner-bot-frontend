@@ -14,6 +14,8 @@ interface TaskDetailProps {
   onBack: () => void;
 }
 
+const showDone = api.isAvailable("taskDone");
+
 export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
   const [task, setTask] = useState<Task | null>(null);
   const [comments, setComments] = useState<CommentView[]>([]);
@@ -66,7 +68,7 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
         )}
         <h1>
           Task
-          <span className="sub">{task.done ? "Done" : "Open"}</span>
+          {showDone && <span className="sub">{task.done ? "Done" : "Open"}</span>}
         </h1>
         <button className="icon-btn" aria-label="Delete task" onClick={() => void remove()}>
           <TrashIcon />
@@ -80,15 +82,17 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
 
         <div className="list">
           <div className="row" style={{ alignItems: "flex-start", cursor: "default" }}>
-            <button
-              className="check"
-              aria-pressed={task.done}
-              aria-label={task.done ? "Mark as not done" : "Mark as done"}
-              onClick={() => void toggleDone()}
-              style={{ marginTop: 2 }}
-            >
-              {task.done && <CheckIcon />}
-            </button>
+            {showDone && (
+              <button
+                className="check"
+                aria-pressed={task.done}
+                aria-label={task.done ? "Mark as not done" : "Mark as done"}
+                onClick={() => void toggleDone()}
+                style={{ marginTop: 2 }}
+              >
+                {task.done && <CheckIcon />}
+              </button>
+            )}
             <div className="row-main">
               <div
                 className="row-title"

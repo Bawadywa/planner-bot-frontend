@@ -44,7 +44,14 @@ if (dataSource === "api" && !serverBacked) {
 const served = {
   identity: serverBacked,
   boards: serverBacked,
-  tasks: false,
+  tasks: serverBacked,
+  /* Completion has its own entry because it arrived on its own: the column, the
+     schema field and the two handler assignments landed a step after the rest
+     of a task did, and for that step the checkbox was hidden while everything
+     around it worked. Kept as a separate flag rather than folded back into
+     `tasks` - it is the finest grain the hiding rule has needed, and the next
+     column to arrive late will want the same treatment. */
+  taskDone: serverBacked,
   comments: false,
   team: false,
   invites: false,
@@ -80,9 +87,8 @@ export function isAvailable(feature: Feature): boolean {
 const missing: Record<Feature, string> = {
   identity: "",
   boards: "",
-  tasks:
-    "Two things are missing: a route to list a board's tasks (GET /tasks?board_id=), " +
-    "and a `done` column to store whether a task is finished.",
+  tasks: "",
+  taskDone: "Marking a task done needs a `done` column on the Task model.",
   comments:
     "Comments need a table with task_id and author_id, and routes to read and post them.",
   team: "The team list needs a membership table and a route to read it.",
@@ -171,19 +177,27 @@ export async function deleteBoard(id: ID): Promise<void> {
 
 /* ------------------------------------------------------------------ tasks -- */
 
-export const listTasks = local.listTasks;
-export const createTask = local.createTask;
-export const updateTask = local.updateTask;
-export const deleteTask = local.deleteTask;
-export const getTask = local.getTask;
+export const listTasks = served.tasks ? remote.listTasks : local.listTasks;
+export const createTask = served.tasks ? remote.createTask : local.createTask;
+export const updateTask = served.tasks ? remote.updateTask : local.updateTask;
+export const deleteTask = served.tasks ? remote.deleteTask : local.deleteTask;
+export const getTask = served.tasks ? remote.getTask : local.getTask;
 
-/** GET /tasks - everything on every board this user can open, for the calendar.
+/** Every task on every board this user can open, for the calendar.
  *
- *  Composed rather than delegated: the boards may come from the server while
- *  the tasks are still local, and only this layer knows that. */
+ *  Composed rather than delegated, because there is no route for it: the server
+ *  lists tasks one board at a time, so this fans out over the board list. That
+ *  is N+1 requests, which is fine at the handful of boards one person keeps and
+ *  would not be at a hundred - a GET /tasks with no board_id would collapse it.
+ *
+ *  In local mode the same shape reads one store, hence the branch rather than
+ *  two implementations. */
 export async function listAllTasks(): Promise<Task[]> {
   const boards: Board[] = await listBoards();
-  return local.tasksForBoards(boards.map((b) => b.id));
+  if (!served.tasks) return local.tasksForBoards(boards.map((b) => b.id));
+
+  const perBoard = await Promise.all(boards.map((b) => remote.listTasks(b.id)));
+  return perBoard.flat();
 }
 
 /* --------------------------------------------------------------- comments -- */

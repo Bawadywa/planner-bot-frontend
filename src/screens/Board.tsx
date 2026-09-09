@@ -15,6 +15,7 @@ interface BoardProps {
 }
 
 const showTasks = api.isAvailable("tasks");
+const showDone = api.isAvailable("taskDone");
 
 export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
   const [board, setBoard] = useState<BoardType | null>(null);
@@ -89,7 +90,11 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
           {board?.title ?? "…"}
           {showTasks && (
             <span className="sub">
-              {tasks.length === 0 ? "No tasks yet" : `${open} open · ${done} done`}
+              {tasks.length === 0
+                ? "No tasks yet"
+                : showDone
+                  ? `${open} open · ${done} done`
+                  : `${tasks.length} ${tasks.length === 1 ? "task" : "tasks"}`}
             </span>
           )}
         </h1>
@@ -138,14 +143,16 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
           <div className="list">
             {tasks.map((task) => (
               <div key={task.id} className={`row task${task.done ? " done" : ""}`}>
-                <button
-                  className="check"
-                  aria-pressed={task.done}
-                  aria-label={task.done ? "Mark as not done" : "Mark as done"}
-                  onClick={() => void toggleDone(task)}
-                >
-                  {task.done && <CheckIcon />}
-                </button>
+                {showDone && (
+                  <button
+                    className="check"
+                    aria-pressed={task.done}
+                    aria-label={task.done ? "Mark as not done" : "Mark as done"}
+                    onClick={() => void toggleDone(task)}
+                  >
+                    {task.done && <CheckIcon />}
+                  </button>
+                )}
 
                 <button
                   className="row-main"
