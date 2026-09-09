@@ -6,6 +6,7 @@ import { emptyDraft, TaskFields, type TaskDraft } from "../components/TaskFields
 import { CheckIcon, ChevronLeft, SendIcon, TrashIcon } from "../components/Icons";
 import { confirmAction, haptic, hapticError, inTelegram } from "../telegram";
 import { dueState, formatDue, formatWhen } from "../lib/date";
+import { priorityOf, toPriorityCode } from "../lib/priority";
 import type { ID, Task } from "../types";
 
 interface TaskDetailProps {
@@ -116,6 +117,21 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
             <div className={`due ${task.deadline && !task.done ? dueState(task.deadline) : ""}`}>
               {task.deadline ? formatDue(task.deadline) : "None"}
             </div>
+          </div>
+
+          <div className="row" style={{ cursor: "default" }}>
+            <div className="row-main">
+              <div className="row-sub" style={{ marginTop: 0 }}>
+                Priority
+              </div>
+            </div>
+            <span
+              className={`tag priority ${priorityOf(task.priority_code).tone}${
+                priorityOf(task.priority_code).known ? "" : " unknown"
+              }`}
+            >
+              {priorityOf(task.priority_code).label}
+            </span>
           </div>
         </div>
 
@@ -259,6 +275,9 @@ function EditTaskSheet({
     description: task.description,
     deadline: task.deadline ?? "",
     image: task.image,
+    // Narrowed, not just read: a task stored before priority existed - or on a
+    // code this build has no chip for - has to open on something selectable.
+    priority_code: toPriorityCode(task.priority_code),
   });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);

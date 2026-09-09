@@ -23,9 +23,16 @@ export function Calendar({ onOpenTask }: CalendarProps) {
 
   useEffect(() => {
     void (async () => {
-      const [t, b] = await Promise.all([api.listAllTasks(), api.listBoards()]);
-      setTasks(t);
-      setBoards(b);
+      try {
+        const [t, b] = await Promise.all([api.listAllTasks(), api.listBoards()]);
+        setTasks(t);
+        setBoards(b);
+      } catch (err) {
+        // Both reads go through the board list, which is a network call in api
+        // mode. The month grid renders either way; this only keeps the failure
+        // from surfacing as an unhandled rejection.
+        console.warn("[planner] calendar could not load", err);
+      }
     })();
   }, []);
 

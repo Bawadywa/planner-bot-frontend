@@ -1,18 +1,28 @@
 /* ============================================================================
-   Data layer.
+   Data layer - localStorage half.
 
    Every function here is async and named after the HTTP endpoint it stands in
-   for (the endpoint is in the comment above each one). Today they read and
-   write localStorage; when the FastAPI routes exist, only the bodies change -
-   the signatures, argument shapes and return shapes stay identical, so no
-   screen has to be touched.
+   for (the endpoint is in the comment above each one), and each has a twin of
+   the same signature in remote.ts. api/index.ts picks between them per feature,
+   so a feature moves to the backend by flipping one flag there - no screen is
+   touched, and the ones the backend has no routes for yet keep working.
 
-   The backend is deliberately not involved yet.
+   Nothing here is a security boundary. It is one browser's storage: the owner
+   of the device can edit every row in it with devtools. The checks below exist
+   to keep the shapes honest, not to enforce anything.
    ============================================================================ */
 
-import { tgUser } from "./telegram";
-import { displayName } from "./lib/user";
-import type { Board, Comment, ID, Invite, Member, Task, User } from "./types";
+import { tgUser } from "../telegram";
+import { displayName } from "../lib/user";
+import { ApiError } from "../lib/http";
+import {
+  byUrgency,
+  DEFAULT_PRIORITY,
+  priorityOf,
+  toPriorityCode,
+  type PriorityCode,
+} from "../lib/priority";
+import type { Board, Comment, ID, Invite, Member, Task, User } from "../types";
 
 const DB_KEY = "planner.db.v1";
 const CURRENT_USER_KEY = "planner.current-user.v1";
@@ -35,24 +45,20 @@ const EMPTY_DB: Db = {
   invites: [],
 };
 
-/** Mirrors an HTTP failure so screens can branch on `status` exactly as they
- *  will once these calls are real fetches. */
-export class ApiError extends Error {
-  status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-  }
-}
-
 /* ---------------------------------------------------------------- storage -- */
 
 function readDb(): Db {
   try {
     const raw = localStorage.getItem(DB_KEY);
     if (!raw) return structuredClone(EMPTY_DB);
-    return { ...structuredClone(EMPTY_DB), ...(JSON.parse(raw) as Partial<Db>) };
+    const db = { ...structuredClone(EMPTY_DB), ...(JSON.parse(raw) as Partial<Db>) };
+    // Tasks written before priority existed have no priority_code, and the type
+    // says they do. Filling it on read keeps that honest without a migration
+    // step, and costs one pass over rows that are already in memory.
+    for (const task of db.tasks) {
+      if (task.priority_code == null) task.priority_code = DEFAULT_PRIORITY;
+    }
+    return db;
   } catch {
     // Corrupt JSON, or storage blocked entirely (private mode). Start clean
     // rather than leaving every screen throwing.
@@ -114,13 +120,17 @@ function requireUser(): User {
   return user;
 }
 
+/** A user without the row's own timestamp - what a launch knows before any
+ *  store has been consulted. */
+export type Identity = Omit<User, "created_at"> & { created_at?: string };
+
 /** The identity to run as.
  *
  *  Outside Telegram - `npm run dev` in a desktop browser - nothing signs a
  *  user, and refusing to start there would make the app untestable outside a
  *  phone. So one fixed local identity stands in. It never leaves the browser,
  *  and a real Telegram launch always wins over it. */
-function launchIdentity(): Omit<User, "created_at"> {
+export function launchIdentity(): Identity {
   if (tgUser) {
     return {
       id: String(tgUser.id),
@@ -178,18 +188,29 @@ function adoptLegacyRows(db: Db, owner: ID): void {
  *  Upsert by Telegram id, which is what create_user() in backend/app/main.py
  *  already does against the verified id. Called once on launch in place of a
  *  sign-in screen; the profile fields are refreshed every time, because someone
- *  can rename themselves in Telegram and the app should follow. */
-export async function signIn(): Promise<User> {
-  const identity = launchIdentity();
+ *  can rename themselves in Telegram and the app should follow.
+ *
+ *  `confirmed` is the row the backend just returned, when there is one. It is
+ *  mirrored here rather than replacing this call, because the features the
+ *  backend has no routes for yet - tasks, comments, team, invites - still read
+ *  the local user row to know who is acting. */
+export async function signIn(confirmed?: Identity): Promise<User> {
+  const identity = confirmed ?? launchIdentity();
   const db = readDb();
 
   adoptLegacyRows(db, identity.id);
 
   const existing = db.users.find((u) => u.id === identity.id);
-  const user: User = existing ?? { ...identity, created_at: now() };
+  const user: User = existing ?? {
+    ...identity,
+    created_at: identity.created_at ?? now(),
+  };
 
   if (existing) {
-    Object.assign(existing, identity);
+    // created_at is the row's own, never the caller's - an absent one here
+    // would otherwise blank a timestamp the row already has.
+    const { created_at: _ignored, ...profile } = identity;
+    Object.assign(existing, profile);
   } else {
     db.users.push(user);
     // The first identity to open the app on this device owns the team.
@@ -286,6 +307,7 @@ export interface TaskInput {
   description: string;
   deadline: string | null;
   image: string | null;
+  priority_code: PriorityCode;
 }
 
 /** GET /boards/{board_id}/tasks */
@@ -295,16 +317,25 @@ export async function listTasks(boardId: ID): Promise<Task[]> {
     .sort((a, b) => {
       if (a.done !== b.done) return a.done ? 1 : -1; // open work first
       // Then soonest deadline; tasks with no deadline sink to the bottom.
+      // Deadline outranks priority on purpose - something due tomorrow is more
+      // urgent than a "high" with no date - so priority only breaks the tie,
+      // which for undated tasks is every comparison.
       const ad = a.deadline ?? "9999-12-31";
       const bd = b.deadline ?? "9999-12-31";
-      return ad.localeCompare(bd) || a.created_at.localeCompare(b.created_at);
+      return (
+        ad.localeCompare(bd) ||
+        byUrgency(priorityOf(a.priority_code).code, priorityOf(b.priority_code).code) ||
+        a.created_at.localeCompare(b.created_at)
+      );
     });
 }
 
-/** GET /tasks - every task the signed-in user can see, for the calendar. */
-export async function listAllTasks(): Promise<Task[]> {
-  const boards = await listBoards();
-  const visible = new Set(boards.map((b) => b.id));
+/** GET /tasks - every task on the given boards, for the calendar.
+ *
+ *  The board list is passed in rather than read here, because in api mode the
+ *  boards come from the server while the tasks are still local. */
+export async function tasksForBoards(boardIds: ID[]): Promise<Task[]> {
+  const visible = new Set(boardIds);
   return readDb().tasks.filter((t) => visible.has(t.board_id));
 }
 
@@ -326,6 +357,7 @@ export async function createTask(boardId: ID, input: TaskInput): Promise<Task> {
     deadline: input.deadline || null,
     image: input.image,
     done: false,
+    priority_code: toPriorityCode(input.priority_code),
     created_at: now(),
   };
   db.tasks.push(task);

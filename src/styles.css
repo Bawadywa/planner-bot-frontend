@@ -707,6 +707,40 @@ img.avatar {
   color: var(--warn);
 }
 
+/* Priority is styled by what the code MEANS, never by the number itself - the
+   backend renumbered these once already, and a rule keyed on `p0` would have
+   silently repainted High as the calm colour. See PriorityTone in
+   lib/priority.ts. Medium keeps the neutral grey the base .tag gives: if every
+   level were coloured, none would read as a signal. */
+.tag.priority.urgent {
+  background: var(--danger-weak);
+  color: var(--danger);
+}
+
+.tag.priority.calm {
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+
+/* A code the backend has that this bundle does not. Marked rather than
+   silently rendered as a neighbour - see priorityOf() in lib/priority.ts. */
+.tag.priority.unknown {
+  background: #fdf6e8;
+  color: var(--warn);
+}
+
+.chip.priority[aria-pressed="true"].urgent {
+  background: var(--danger-weak);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.chip.priority[aria-pressed="true"].calm {
+  background: var(--surface-sunk);
+  border-color: var(--border-strong);
+  color: var(--muted);
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;

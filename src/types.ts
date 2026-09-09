@@ -4,6 +4,8 @@
    enforce them client-side so the mock can never hold a value the DB would
    reject. */
 
+import type { PriorityCode } from "./lib/priority";
+
 export type ID = string;
 
 /** Identity comes from Telegram, so there is no email and no password here -
@@ -34,6 +36,11 @@ export interface Task {
   deadline: string | null; // date, "YYYY-MM-DD"
   image: string | null; // data: URL in the mock; an object-storage key later
   done: boolean; // NOT in models.py yet - see the note in the handover
+  /** Task.priority_code on the backend: a plain int column, not a foreign key,
+   *  carrying the codes in backend/app/data/json/priorities.json. Labels are
+   *  resolved at render time - see lib/priority.ts. Not nullable, because the
+   *  column is not. */
+  priority_code: PriorityCode;
   created_at: string;
 }
 

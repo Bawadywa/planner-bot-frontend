@@ -29,6 +29,9 @@ function inviteText(boardTitles: string[]): string {
   return `Join me on ${what} in Planner`;
 }
 
+const showTeam = api.isAvailable("team");
+const showInvites = api.isAvailable("invites");
+
 interface SettingsProps {
   user: User;
   /** Called after the local database is wiped, so the shell can re-derive the
@@ -46,21 +49,43 @@ export function Settings({ user, onReset }: SettingsProps) {
   // Set when a share could not use Telegram's own sheet, which otherwise looks
   // exactly like a button that does nothing.
   const [note, setNote] = useState("");
+  const [health, setHealth] = useState<"checking" | "up" | "down">("checking");
 
   const load = useCallback(async () => {
-    const [m, b, i] = await Promise.all([
-      api.listMembers(),
-      api.listBoards(),
-      api.listInvites(),
-    ]);
-    setMembers(m);
-    setBoards(b);
-    setInvites(i);
+    try {
+      const [m, b, i] = await Promise.all([
+        showTeam ? api.listMembers() : Promise.resolve([]),
+        api.listBoards(),
+        showInvites ? api.listInvites() : Promise.resolve([]),
+      ]);
+      setMembers(m);
+      setBoards(b);
+      setInvites(i);
+      setError("");
+    } catch (err) {
+      // In api mode the board list is a network call, so this screen has to
+      // survive the server being unreachable rather than rendering half-empty
+      // with no explanation.
+      setError(err instanceof Error ? err.message : "Could not load your team.");
+    }
   }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Only asked when there is a backend to ask. Nothing depends on the answer -
+  // it is a diagnosis for the row below, so a failure just reads as "offline".
+  useEffect(() => {
+    if (!api.serverBacked) return;
+    let live = true;
+    void api.checkHealth().then((ok) => {
+      if (live) setHealth(ok ? "up" : "down");
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   async function remove(member: Member) {
     const ok = await confirmAction(`Remove ${displayName(member)} from the team?`);
@@ -104,6 +129,7 @@ export function Settings({ user, onReset }: SettingsProps) {
   }
 
   const usage = api.storageUsage();
+  const signInError = api.lastSignInError();
   const boardName = (id: ID) => boards.find((b) => b.id === id)?.title;
 
   return (
@@ -134,60 +160,70 @@ export function Settings({ user, onReset }: SettingsProps) {
           </div>
         </div>
 
-        <div className="section-head" style={{ marginTop: 24 }}>
-          <h2>Team</h2>
-          <span className="count">{members.length}</span>
-        </div>
-
-        <div className="list">
-          {members.map((member) => (
-            <div key={member.id} className="row" style={{ cursor: "default" }}>
-              <div className="avatar">{initials(member)}</div>
-
-              <div className="row-main">
-                <div className="row-title">{displayName(member)}</div>
-                <div className="row-sub">
-                  {member.board_ids.length === 0
-                    ? "No boards yet"
-                    : member.board_ids
-                        .map(boardName)
-                        .filter(Boolean)
-                        .join(", ")}
-                </div>
-              </div>
-
-              <span className={`tag ${member.role === "owner" ? "owner" : ""}`}>
-                {member.role}
-              </span>
-              {member.status === "invited" && <span className="tag invited">invited</span>}
-
-              {member.role !== "owner" && (
-                <button
-                  className="icon-btn"
-                  aria-label={`Remove ${displayName(member)}`}
-                  onClick={() => void remove(member)}
-                >
-                  <TrashIcon />
-                </button>
-              )}
+        {showTeam && (
+          <>
+            <div className="section-head" style={{ marginTop: 24 }}>
+              <h2>Team</h2>
+              <span className="count">{members.length}</span>
             </div>
-          ))}
-        </div>
 
-        <button
-          className="btn btn-secondary btn-block"
-          style={{ marginTop: 12 }}
-          onClick={() => setInviting(true)}
-          disabled={boards.length === 0}
-        >
-          <PlusIcon />
-          Invite someone
-        </button>
+            <div className="list">
+              {members.map((member) => (
+                <div key={member.id} className="row" style={{ cursor: "default" }}>
+                  <div className="avatar">{initials(member)}</div>
 
-        {boards.length === 0 && (
-          <div className="hint" style={{ marginTop: 8 }}>
-            Create a board first — an invite grants access to specific boards.
-          </div>
+                  <div className="row-main">
+                    <div className="row-title">{displayName(member)}</div>
+                    <div className="row-sub">
+                      {member.board_ids.length === 0
+                        ? "No boards yet"
+                        : member.board_ids
+                            .map(boardName)
+                            .filter(Boolean)
+                            .join(", ")}
+                    </div>
+                  </div>
+
+                  <span className={`tag ${member.role === "owner" ? "owner" : ""}`}>
+                    {member.role}
+                  </span>
+                  {member.status === "invited" && (
+                    <span className="tag invited">invited</span>
+                  )}
+
+                  {member.role !== "owner" && (
+                    <button
+                      className="icon-btn"
+                      aria-label={`Remove ${displayName(member)}`}
+                      onClick={() => void remove(member)}
+                    >
+                      <TrashIcon />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {showInvites && (
+          <>
+            <button
+              className="btn btn-secondary btn-block"
+              style={{ marginTop: 12 }}
+              onClick={() => setInviting(true)}
+              disabled={boards.length === 0}
+            >
+              <PlusIcon />
+              Invite someone
+            </button>
+
+            {boards.length === 0 && (
+              <div className="hint" style={{ marginTop: 8 }}>
+                Create a board first — an invite grants access to specific boards.
+              </div>
+            )}
+          </>
         )}
 
         {invites.length > 0 && (
@@ -241,11 +277,42 @@ export function Settings({ user, onReset }: SettingsProps) {
           <h2>Data</h2>
         </div>
         <div className="list">
+          {api.serverBacked && (
+            <div className="row" style={{ cursor: "default" }}>
+              <div className="row-main">
+                <div className="row-title">Backend</div>
+                <div className="row-sub">
+                  Boards and your account are stored on the server.
+                </div>
+              </div>
+              <span className={`tag ${health === "up" ? "owner" : ""}`}>
+                {health === "checking" ? "…" : health === "up" ? "online" : "offline"}
+              </span>
+            </div>
+          )}
+
+          {/* Reachable and registered are different things: /health answers
+              before POST /user has ever succeeded, so a green row above can sit
+              on top of an account the backend has no row for. */}
+          {api.serverBacked && signInError && (
+            <div className="row" style={{ cursor: "default", alignItems: "flex-start" }}>
+              <div className="row-main">
+                <div className="row-title">Account not registered</div>
+                <div className="row-sub" style={{ whiteSpace: "normal" }}>
+                  {signInError}
+                </div>
+              </div>
+              <span className="tag invited">local</span>
+            </div>
+          )}
+
           <div className="row" style={{ cursor: "default" }}>
             <div className="row-main">
               <div className="row-title">Stored in this browser</div>
               <div className="row-sub">
-                Nothing is sent to a server yet — invites are local only.
+                {api.serverBacked
+                  ? "Tasks, comments, team and invites — not on the server yet."
+                  : "Nothing is sent to a server yet — invites are local only."}
               </div>
             </div>
             <div className="row-meta">{usage.label}</div>

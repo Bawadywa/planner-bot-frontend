@@ -1,4 +1,9 @@
 import { ImagePicker } from "./ImagePicker";
+import {
+  DEFAULT_PRIORITY,
+  PRIORITIES_BY_URGENCY,
+  type PriorityCode,
+} from "../lib/priority";
 
 /** The editable half of a Task. Deadline is held as "" rather than null while
  *  it is in a form, because that is what an empty <input type="date"> gives
@@ -8,6 +13,7 @@ export interface TaskDraft {
   description: string;
   deadline: string;
   image: string | null;
+  priority_code: PriorityCode;
 }
 
 export const emptyDraft: TaskDraft = {
@@ -15,6 +21,7 @@ export const emptyDraft: TaskDraft = {
   description: "",
   deadline: "",
   image: null,
+  priority_code: DEFAULT_PRIORITY,
 };
 
 interface TaskFieldsProps {
@@ -72,6 +79,31 @@ export function TaskFields({ draft, onChange, autoFocus }: TaskFieldsProps) {
           onChange={(e) => set("deadline", e.target.value)}
         />
       </label>
+
+      {/* Not a <select>: three options fit as chips, and Telegram's webview
+          renders a native picker for a select that covers half the screen. The
+          field is a plain div because a <label> would make every chip inside it
+          toggle the first one. */}
+      <div className="field">
+        <div className="label">
+          <span>Priority</span>
+        </div>
+        <div className="chips" role="radiogroup" aria-label="Priority">
+          {PRIORITIES_BY_URGENCY.map((priority) => (
+            <button
+              key={priority.code}
+              type="button"
+              role="radio"
+              aria-checked={draft.priority_code === priority.code}
+              className={`chip priority ${priority.tone}`}
+              aria-pressed={draft.priority_code === priority.code}
+              onClick={() => set("priority_code", priority.code)}
+            >
+              {priority.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <ImagePicker value={draft.image} onChange={(image) => set("image", image)} />
     </>

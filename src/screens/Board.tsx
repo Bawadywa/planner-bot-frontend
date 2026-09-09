@@ -5,6 +5,7 @@ import { emptyDraft, TaskFields, type TaskDraft } from "../components/TaskFields
 import { CheckIcon, ChevronLeft, PlusIcon, TrashIcon } from "../components/Icons";
 import { confirmAction, haptic, hapticError, inTelegram } from "../telegram";
 import { dueState, formatDue } from "../lib/date";
+import { priorityOf } from "../lib/priority";
 import type { Board as BoardType, ID, Task } from "../types";
 
 interface BoardProps {
@@ -12,6 +13,8 @@ interface BoardProps {
   onBack: () => void;
   onOpenTask: (taskId: ID) => void;
 }
+
+const showTasks = api.isAvailable("tasks");
 
 export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
   const [board, setBoard] = useState<BoardType | null>(null);
@@ -21,7 +24,10 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
 
   const load = useCallback(async () => {
     try {
-      const [b, t] = await Promise.all([api.getBoard(boardId), api.listTasks(boardId)]);
+      const [b, t] = await Promise.all([
+        api.getBoard(boardId),
+        showTasks ? api.listTasks(boardId) : Promise.resolve([]),
+      ]);
       setBoard(b);
       setTasks(t);
     } catch {
@@ -55,7 +61,16 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
       `Delete "${board?.title}" and all of its tasks? This cannot be undone.`,
     );
     if (!ok) return;
-    await api.deleteBoard(boardId);
+    try {
+      await api.deleteBoard(boardId);
+    } catch (err) {
+      // The backend has no DELETE route yet, so in api mode this is a 501
+      // rather than a network blip. Either way the board is still there, and
+      // leaving the screen would say otherwise.
+      hapticError();
+      setError(err instanceof Error ? err.message : "Could not delete the board.");
+      return;
+    }
     haptic("medium");
     onBack();
   }
@@ -74,12 +89,14 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
         )}
         <h1>
           {board?.title ?? "…"}
-          <span className="sub">
-            {tasks.length === 0
-              ? "No tasks yet"
-              : `${open} open · ${done} done`}
-          </span>
+          {showTasks && (
+            <span className="sub">
+              {tasks.length === 0 ? "No tasks yet" : `${open} open · ${done} done`}
+            </span>
+          )}
         </h1>
+        {/* Kept even in api mode, where it has no route: it answers with a 501
+            naming the route instead of pretending, which is the point. */}
         <button
           className="icon-btn"
           aria-label="Delete board"
@@ -87,19 +104,31 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
         >
           <TrashIcon />
         </button>
-        <button
-          className="icon-btn"
-          aria-label="New task"
-          onClick={() => setCreating(true)}
-        >
-          <PlusIcon />
-        </button>
+        {showTasks && (
+          <button
+            className="icon-btn"
+            aria-label="New task"
+            onClick={() => setCreating(true)}
+          >
+            <PlusIcon />
+          </button>
+        )}
       </header>
 
       <div className="screen has-nav">
         {error && <div className="error">{error}</div>}
 
-        {tasks.length === 0 ? (
+        {!showTasks ? (
+          <div className="empty">
+            <div className="title">Boards only, for now</div>
+            <p>
+              This board is stored on the backend. Tasks are not — they need a
+              board foreign key on the Task model and routes to read them back,
+              so they are hidden rather than saved somewhere this board cannot
+              see.
+            </p>
+          </div>
+        ) : tasks.length === 0 ? (
           <div className="empty">
             <div className="title">Nothing here yet</div>
             <p>Add the first task to this board.</p>
@@ -129,7 +158,17 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
                     onOpenTask(task.id);
                   }}
                 >
-                  <div className="row-title">{task.title}</div>
+                  <div className="row-title">
+                    {task.title}
+                    {/* Only the urgent end is marked. Tagging all three would
+                        put a badge on every row and mark nothing out. Keyed on
+                        tone, not the code, so a renumbering cannot invert it. */}
+                    {!task.done && priorityOf(task.priority_code).tone === "urgent" && (
+                      <span className="tag priority urgent" style={{ marginLeft: 6 }}>
+                        {priorityOf(task.priority_code).label}
+                      </span>
+                    )}
+                  </div>
                   {(task.description || task.deadline) && (
                     <div className="row-sub">
                       {task.deadline && (

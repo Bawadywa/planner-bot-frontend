@@ -15,6 +15,8 @@ type Lookup =
   | { state: "unknown" } // no such token in this browser's store
   | { state: "found"; invite: Invite; boards: Board[] };
 
+const showInvites = api.isAvailable("invites");
+
 /** Shown when the app was launched from an invite link - either
  *  t.me/<bot>?startapp=inv_… or the bot's WebApp button carrying ?inv=… */
 export function InviteAccept({ token, onDone }: InviteAcceptProps) {
@@ -26,7 +28,24 @@ export function InviteAccept({ token, onDone }: InviteAcceptProps) {
   useEffect(() => {
     let live = true;
     void (async () => {
-      const [invite, boards] = await Promise.all([api.getInvite(token), api.listBoards()]);
+      // With invites hidden, the local store is not consulted at all: a token
+      // minted here before the switch could still be found and "accepted",
+      // writing a membership row the backend has no idea about.
+      if (!showInvites) {
+        setLookup({ state: "unknown" });
+        return;
+      }
+
+      // The two reads can come from different stores - invites are local, the
+      // boards may be the server's - so they fail independently. A board list
+      // that cannot be fetched must not turn a valid invite into a dead link.
+      const invite = await api.getInvite(token).catch(() => null);
+      let boards: Board[] = [];
+      try {
+        boards = await api.listBoards();
+      } catch (err) {
+        if (live) setError(err instanceof Error ? err.message : "Could not load the boards.");
+      }
       if (!live) return;
       setLookup(
         invite
