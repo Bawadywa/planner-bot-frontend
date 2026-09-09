@@ -39,16 +39,8 @@ if (dataSource === "api" && !serverBacked) {
   console.info("[planner] boards and identity are served by the backend");
 }
 
-/** Which features the backend can carry today, and what each one is still
- *  waiting for. Flip a false to true once the routes next to it exist.
- *
- *    identity  POST /user                        served
- *    boards    GET /taskboards, POST /taskboard  served (read + create)
- *    tasks     needs GET /taskboards/{id}/tasks, PATCH and DELETE /tasks/{id},
- *              a board FK on the Task model, and a `done` column
- *    comments  needs GET and POST /tasks/{id}/comments, DELETE /comments/{id}
- *    team      needs GET /team, PATCH and DELETE /team/{id}
- *    invites   needs POST and GET /invites, GET and POST /invites/{token} */
+/** Which features the backend can carry today. Flip a false to true once the
+ *  routes listed in `missing` below exist. */
 const served = {
   identity: serverBacked,
   boards: serverBacked,
@@ -77,6 +69,30 @@ export type Feature = keyof typeof served;
  *  refusal is worth more here than a missing button, which reads as a bug. */
 export function isAvailable(feature: Feature): boolean {
   return !serverBacked || served[feature];
+}
+
+/** What each unserved feature is still waiting for, in the words the UI shows.
+ *
+ *  Deliberately next to `served`, and read by the screens rather than written
+ *  into them: the first version of this lived as a paragraph inside Board.tsx
+ *  and was describing a missing foreign key for days after the column landed.
+ *  One place to edit, and flipping a flag above retires the sentence with it. */
+const missing: Record<Feature, string> = {
+  identity: "",
+  boards: "",
+  tasks:
+    "Two things are missing: a route to list a board's tasks (GET /tasks?board_id=), " +
+    "and a `done` column to store whether a task is finished.",
+  comments:
+    "Comments need a table with task_id and author_id, and routes to read and post them.",
+  team: "The team list needs a membership table and a route to read it.",
+  invites:
+    "Invites need a table with a unique token, and routes to mint and redeem one.",
+};
+
+/** Why a feature is hidden, or null when it is not. */
+export function missingFor(feature: Feature): string | null {
+  return served[feature] || !serverBacked ? null : missing[feature];
 }
 
 /* --------------------------------------------------------------- identity -- */
@@ -135,11 +151,23 @@ export const listBoards = served.boards ? remote.listBoards : local.listBoards;
 export const createBoard = served.boards ? remote.createBoard : local.createBoard;
 export const getBoard = served.boards ? remote.getBoard : local.getBoard;
 
-/* Renaming and deleting have no route. In api mode they raise rather than
-   falling back, because the local store is not where the board lives: a
-   "successful" delete would be undone by the next listBoards(). */
+/* Renaming still has no route, and raises rather than falling back: the local
+   store is not where the board lives, so a "successful" rename would be undone
+   by the next listBoards(). */
 export const renameBoard = served.boards ? remote.renameBoard : local.renameBoard;
-export const deleteBoard = served.boards ? remote.deleteBoard : local.deleteBoard;
+
+/** DELETE /taskboard, then the same sweep locally.
+ *
+ *  Both halves, because the board's rows are split across the two stores while
+ *  tasks are still local: the database cascades its own tasks through
+ *  Task.board_id, and this clears the ones that never reached it. Without the
+ *  second call they would sit in localStorage forever, invisible and pointing
+ *  at a board id that no longer resolves. */
+export async function deleteBoard(id: ID): Promise<void> {
+  if (!served.boards) return local.deleteBoard(id);
+  await remote.deleteBoard(id);
+  await local.deleteBoard(id);
+}
 
 /* ------------------------------------------------------------------ tasks -- */
 

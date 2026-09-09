@@ -64,9 +64,7 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
     try {
       await api.deleteBoard(boardId);
     } catch (err) {
-      // The backend has no DELETE route yet, so in api mode this is a 501
-      // rather than a network blip. Either way the board is still there, and
-      // leaving the screen would say otherwise.
+      // The board is still there, and leaving the screen would say otherwise.
       hapticError();
       setError(err instanceof Error ? err.message : "Could not delete the board.");
       return;
@@ -95,8 +93,6 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
             </span>
           )}
         </h1>
-        {/* Kept even in api mode, where it has no route: it answers with a 501
-            naming the route instead of pretending, which is the point. */}
         <button
           className="icon-btn"
           aria-label="Delete board"
@@ -122,10 +118,11 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
           <div className="empty">
             <div className="title">Boards only, for now</div>
             <p>
-              This board is stored on the backend. Tasks are not — they need a
-              board foreign key on the Task model and routes to read them back,
-              so they are hidden rather than saved somewhere this board cannot
-              see.
+              This board is saved on the backend. Tasks are not yet, so they are
+              hidden rather than written somewhere this board cannot see them.
+            </p>
+            <p className="hint" style={{ marginTop: 10 }}>
+              {api.missingFor("tasks")}
             </p>
           </div>
         ) : tasks.length === 0 ? (

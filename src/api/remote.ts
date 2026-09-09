@@ -49,6 +49,24 @@ function missing(route: string): never {
   throw new ApiError(501, `The backend has no ${route} route yet.`);
 }
 
+/** Ids are opaque strings up here and integers in the database, so anything
+ *  going back the other way has to be one.
+ *
+ *  A non-numeric id is not a bad request, it is a board minted in local mode
+ *  and still sitting in this browser's store - `null` would go up as the id and
+ *  match nothing, which looks like a delete that quietly did nothing. */
+function numericId(id: ID): number {
+  const n = Number(id);
+  if (!Number.isInteger(n)) {
+    throw new ApiError(
+      422,
+      "That board was created in local mode and does not exist on the server. " +
+        "Erase the local data in Settings.",
+    );
+  }
+  return n;
+}
+
 /* --------------------------------------------------------------- identity -- */
 
 /* The id the server confirmed for this launch. GET /taskboards takes it as a
@@ -152,14 +170,22 @@ export async function getBoard(id: ID): Promise<Board> {
   return board;
 }
 
-/** PATCH /taskboards/{id} - no route. */
+/** PATCH /taskboard - no route. */
 export async function renameBoard(_id: ID, _title: string): Promise<Board> {
-  return missing("PATCH /taskboards/{id}");
+  return missing("PATCH /taskboard");
 }
 
-/** DELETE /taskboards/{id} - no route. */
-export async function deleteBoard(_id: ID): Promise<void> {
-  return missing("DELETE /taskboards/{id}");
+/** DELETE /taskboard
+ *
+ *  The id travels in a JSON body rather than the path, which is what the route
+ *  declares. fetch() does send a body on DELETE - unlike GET, where it drops
+ *  it - so this works from a browser, though some proxies are known to strip
+ *  DELETE bodies and a path parameter would be the safer shape.
+ *
+ *  The tasks go with it in the database: Task.board_id is ON DELETE CASCADE.
+ *  The answer is ignored - there is nothing left to show. */
+export async function deleteBoard(id: ID): Promise<void> {
+  await request<unknown>("DELETE", "/taskboard", { body: { id: numericId(id) } });
 }
 
 /* ----------------------------------------------------------------- health -- */

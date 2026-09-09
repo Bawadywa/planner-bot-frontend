@@ -46,8 +46,8 @@ at all.
 | -------- | -------- | --------------------------------------------------------------- |
 | identity | server   | `POST /user`                                                      |
 | boards   | server   | `GET /taskboards`, `POST /taskboard` — read and create only       |
-| ↳ rename | —        | needs `PATCH /taskboards/{id}`; raises 501 until then             |
-| ↳ delete | —        | needs `DELETE /taskboards/{id}`; raises 501 until then            |
+| ↳ rename | —        | needs `PATCH /taskboard`; raises 501 until then (no UI calls it)   |
+| ↳ delete | server   | `DELETE /taskboard` (id in the body); sweeps local tasks too       |
 | tasks    | browser  | needs `GET /taskboards/{id}/tasks`, `PATCH` + `DELETE /tasks/{id}`|
 | comments | browser  | needs `GET` + `POST /tasks/{id}/comments`, `DELETE /comments/{id}`|
 | team     | browser  | needs `GET /team`, `PATCH` + `DELETE /team/{id}`                  |
@@ -64,10 +64,9 @@ server, a task list still quietly writing `localStorage` looks exactly like one
 that works — until the same board is opened on a second device and it is empty.
 A feature that is absent tells the truth; one that persists nowhere does not.
 
-The exception is **board delete**, which stays on screen and answers `501 "The
-backend has no DELETE /taskboards/{id} route yet."` — it refuses out loud rather
-than pretending, and a visible refusal is worth more than a missing button you
-cannot tell from a bug. In `local` mode nothing is hidden.
+Anything with no route at all refuses out loud rather than pretending — a
+visible refusal is worth more than a missing button you cannot tell from a bug.
+In `local` mode nothing is hidden.
 
 ### Turning the backend on
 
