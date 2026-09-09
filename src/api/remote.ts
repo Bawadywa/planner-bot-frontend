@@ -32,6 +32,7 @@ import {
   asIso,
   asRaw,
   asString,
+  DEBUG,
   get,
   post,
   request,
@@ -201,8 +202,18 @@ export async function deleteBoard(id: ID): Promise<void> {
  *  entry in api/index.ts. */
 function toTask(raw: Raw): Task | null {
   const id = asId(raw.id);
-  const boardId = asId(asRaw(raw.board).id);
-  if (!id || !boardId) return null;
+  /* TaskRead has carried the parent both ways: a nested `board` object first,
+     a flat `board_id` now. Both are read, because a task whose board cannot be
+     identified is dropped below - and when that happened silently, every task
+     vanished from its board while creating one still appeared to work. */
+  const boardId = asId(raw.board_id) ?? asId(asRaw(raw.board).id);
+
+  if (!id || !boardId) {
+    // Never silent. A row the mapper cannot read is a contract change, and the
+    // symptom - an empty list - looks nothing like the cause.
+    if (DEBUG) console.warn("[planner] unreadable task row, dropped", raw);
+    return null;
+  }
 
   return {
     id,
