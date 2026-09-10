@@ -60,9 +60,9 @@ export interface Comment {
  *  head and the account row in Settings are the same problem.
  *
  *  A separate type from User rather than a reuse of it, because a comment
- *  author is a projection: no created_at, and nothing about roles or teams.
- *  The server has no business shipping a thread's worth of team structure to
- *  render a name and a circle. */
+ *  author is a projection: no created_at, and nothing about roles or
+ *  workspaces. The server has no business shipping a thread's worth of
+ *  workspace structure to render a name and a circle. */
 export interface CommentAuthor {
   id: ID;
   first_name: string;

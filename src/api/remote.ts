@@ -29,7 +29,8 @@
    invent. The mappers below read all three when they are there and say
    plainly when they are not, rather than dropping rows into an empty thread.
 
-   Team and invites have no routes at all and stay on the local store.
+   The workspace list and invites have no routes at all and stay on the local
+   store.
    `missing()` below is what a UI action with a local twin but no server route
    raises instead - it must not silently succeed against a copy the server will
    hand back again on the next load.

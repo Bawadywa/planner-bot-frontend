@@ -112,15 +112,15 @@ export const en = {
   "settings.signedIn": "Signed in with Telegram",
   "settings.language": "Language",
   "settings.languageSub": "Applies across the app on this device.",
-  "settings.team": "Team",
+  "settings.workspace": "Workspace",
   "settings.roleOwner": "owner",
   "settings.roleMember": "member",
   "settings.invited": "invited",
   "settings.noBoards": "No boards yet",
-  "settings.confirmRemove": "Remove {name} from the team?",
+  "settings.confirmRemove": "Remove {name} from the workspace?",
   "settings.removeAria": "Remove {name}",
   "settings.removeFailed": "Could not remove them.",
-  "settings.loadFailed": "Could not load your team.",
+  "settings.loadFailed": "Could not load your workspace.",
   "settings.invite": "Invite someone",
   "settings.inviteHint":
     "Create a board first — an invite grants access to specific boards.",
@@ -141,7 +141,7 @@ export const en = {
   "settings.notRegistered": "Account not registered",
   "settings.localTag": "local",
   "settings.storedHere": "Stored in this browser",
-  "settings.storedHereApi": "Team and invites — not on the server yet.",
+  "settings.storedHereApi": "The workspace list and invites — not on the server yet.",
   "settings.storedHereLocal":
     "Nothing is sent to a server yet — invites are local only.",
   "settings.erase": "Erase local data",
@@ -243,7 +243,8 @@ export const en = {
   "missing.taskDone": "Marking a task done needs a `done` column on the Task model.",
   "missing.comments":
     "Comments need CommentRead in backend/app/schemas.py to carry id, user_id and created_at.",
-  "missing.team": "The team list needs a membership table and a route to read it.",
+  "missing.workspace":
+    "Listing a workspace needs a route that reads the users sharing a workspace_id — the Workspace model itself already exists.",
   "missing.invites":
     "Invites need a table with a unique token, and routes to mint and redeem one.",
 

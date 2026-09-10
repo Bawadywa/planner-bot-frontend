@@ -118,15 +118,15 @@ export const uk: Record<Key, Phrase> = {
   "settings.signedIn": "Вхід через Telegram",
   "settings.language": "Мова",
   "settings.languageSub": "Застосовується в усьому застосунку на цьому пристрої.",
-  "settings.team": "Команда",
+  "settings.workspace": "Робочий простір",
   "settings.roleOwner": "власник",
   "settings.roleMember": "учасник",
   "settings.invited": "запрошено",
   "settings.noBoards": "Ще без дошок",
-  "settings.confirmRemove": "Вилучити {name} з команди?",
+  "settings.confirmRemove": "Вилучити {name} з робочого простору?",
   "settings.removeAria": "Вилучити {name}",
   "settings.removeFailed": "Не вдалося вилучити.",
-  "settings.loadFailed": "Не вдалося завантажити команду.",
+  "settings.loadFailed": "Не вдалося завантажити робочий простір.",
   "settings.invite": "Запросити людину",
   "settings.inviteHint":
     "Спершу створіть дошку — запрошення дає доступ до конкретних дошок.",
@@ -152,7 +152,8 @@ export const uk: Record<Key, Phrase> = {
   "settings.notRegistered": "Обліковий запис не зареєстровано",
   "settings.localTag": "локально",
   "settings.storedHere": "Зберігається в цьому браузері",
-  "settings.storedHereApi": "Команда та запрошення — ще не на сервері.",
+  "settings.storedHereApi":
+    "Список робочого простору та запрошення — ще не на сервері.",
   "settings.storedHereLocal":
     "Поки нічого не надсилається на сервер — запрошення лише локальні.",
   "settings.erase": "Стерти локальні дані",
@@ -255,8 +256,8 @@ export const uk: Record<Key, Phrase> = {
     "Щоб позначати завдання виконаним, моделі Task потрібен стовпець `done`.",
   "missing.comments":
     "Коментарям потрібно, щоб CommentRead у backend/app/schemas.py містив id, user_id і created_at.",
-  "missing.team":
-    "Списку команди потрібна таблиця учасників і маршрут для її читання.",
+  "missing.workspace":
+    "Щоб показати робочий простір, потрібен маршрут, який читає користувачів з однаковим workspace_id — сама модель Workspace вже є.",
   "missing.invites":
     "Запрошенням потрібна таблиця з унікальним токеном і маршрути для створення та активації.",
 

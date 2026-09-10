@@ -101,6 +101,23 @@ export function toPriorityCode(code: number | null | undefined): PriorityCode {
   return found ? found.code : DEFAULT_PRIORITY;
 }
 
+/** The loudest tone in a group - what a calendar cell paints itself with when a
+ *  day holds several tasks.
+ *
+ *  Tones rather than codes, because the answer is a colour: an unrecognised
+ *  code has no rank to compare but priorityOf() still gives it a tone, so it
+ *  takes part instead of being skipped. Short-circuits on the first urgent,
+ *  since nothing outranks it. */
+export function heaviestTone(codes: Array<number | null | undefined>): PriorityTone {
+  let heaviest: PriorityTone = "calm";
+  for (const code of codes) {
+    const tone = priorityOf(code).tone;
+    if (tone === "urgent") return "urgent";
+    if (tone === "normal") heaviest = "normal";
+  }
+  return heaviest;
+}
+
 /** Sorts most urgent first. Codes run low → high, so this is the reverse of the
  *  numeric order; unknown codes sort after every known one rather than landing
  *  wherever their number happens to fall. */

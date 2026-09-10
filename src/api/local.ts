@@ -193,7 +193,7 @@ function adoptLegacyRows(db: Db, owner: ID): void {
  *
  *  `confirmed` is the row the backend just returned, when there is one. It is
  *  mirrored here rather than replacing this call, because the features the
- *  backend has no routes for yet - tasks, comments, team, invites - still read
+ *  backend has no routes for yet - the workspace list and invites - still read
  *  the local user row to know who is acting. */
 export async function signIn(confirmed?: Identity): Promise<User> {
   const identity = confirmed ?? launchIdentity();
@@ -214,7 +214,7 @@ export async function signIn(confirmed?: Identity): Promise<User> {
     Object.assign(existing, profile);
   } else {
     db.users.push(user);
-    // The first identity to open the app on this device owns the team.
+    // The first identity to open the app on this device owns the workspace.
     if (!db.members.some((m) => m.role === "owner")) {
       db.members.push({
         id: uid(),
@@ -486,15 +486,15 @@ export async function deleteComment(id: ID): Promise<void> {
   writeDb(db);
 }
 
-/* ------------------------------------------------------------------- team -- */
+/* -------------------------------------------------------------- workspace -- */
 
-/** GET /team */
+/** GET /workspace/users */
 export async function listMembers(): Promise<Member[]> {
   requireUser();
   return readDb().members.sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 
-/** PATCH /team/{id} */
+/** PATCH /workspace/users/{id} */
 export async function setMemberBoards(id: ID, boardIds: ID[]): Promise<Member> {
   const db = readDb();
   const member = db.members.find((m) => m.id === id);
@@ -504,7 +504,7 @@ export async function setMemberBoards(id: ID, boardIds: ID[]): Promise<Member> {
   return member;
 }
 
-/** DELETE /team/{id} */
+/** DELETE /workspace/users/{id} */
 export async function removeMember(id: ID): Promise<void> {
   const db = readDb();
   const member = db.members.find((m) => m.id === id);
@@ -584,7 +584,7 @@ export async function acceptInvite(token: string): Promise<Invite> {
   invite.accepted_by = user.id;
   invite.accepted_at = now();
 
-  // Mirrors the membership row the backend would write, so the Team list
+  // Mirrors the membership row the backend would write, so the workspace list
   // reflects the accept rather than staying empty.
   const existing = db.members.find((m) => m.user_id === user.id);
   if (existing) {

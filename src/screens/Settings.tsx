@@ -15,7 +15,7 @@ import { displayName, handle, initials } from "../lib/user";
 import { LANGUAGES, useLang, useT } from "../i18n";
 import type { Board, ID, Invite, Member, User } from "../types";
 
-const showTeam = api.isAvailable("team");
+const showWorkspace = api.isAvailable("workspace");
 const showInvites = api.isAvailable("invites");
 
 interface SettingsProps {
@@ -41,7 +41,7 @@ export function Settings({ user, onReset }: SettingsProps) {
   const load = useCallback(async () => {
     try {
       const [m, b, i] = await Promise.all([
-        showTeam ? api.listMembers() : Promise.resolve([]),
+        showWorkspace ? api.listMembers() : Promise.resolve([]),
         api.listBoards(),
         showInvites ? api.listInvites() : Promise.resolve([]),
       ]);
@@ -160,10 +160,10 @@ export function Settings({ user, onReset }: SettingsProps) {
 
         <LanguageSection />
 
-        {showTeam && (
+        {showWorkspace && (
           <>
             <div className="section-head" style={{ marginTop: 24 }}>
-              <h2>{t("settings.team")}</h2>
+              <h2>{t("settings.workspace")}</h2>
               <span className="count">{members.length}</span>
             </div>
 

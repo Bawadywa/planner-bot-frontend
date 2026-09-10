@@ -62,7 +62,7 @@ const served = {
      hiding it would look like comments are simply unfinished. It surfaces as
      a named error instead - see listComments() in remote.ts. */
   comments: serverBacked,
-  team: false,
+  workspace: false,
   invites: false,
 };
 
@@ -99,7 +99,7 @@ const missing: Record<Feature, Key | null> = {
   tasks: null,
   taskDone: "missing.taskDone",
   comments: "missing.comments",
-  team: "missing.team",
+  workspace: "missing.workspace",
   invites: "missing.invites",
 };
 
@@ -224,7 +224,7 @@ export const createComment = served.comments ? remote.createComment : local.crea
 export const updateComment = served.comments ? remote.updateComment : local.updateComment;
 export const deleteComment = served.comments ? remote.deleteComment : local.deleteComment;
 
-/* ------------------------------------------------------------------- team -- */
+/* -------------------------------------------------------------- workspace -- */
 
 export const listMembers = local.listMembers;
 export const setMemberBoards = local.setMemberBoards;
@@ -240,9 +240,9 @@ export const revokeInvite = local.revokeInvite;
 
 /* ------------------------------------------------------------------ local -- */
 
-/** Wipes the browser store. Still meaningful in api mode - team and invites
- *  live there - but it cannot touch anything the backend holds, which Settings
- *  says in as many words. */
+/** Wipes the browser store. Still meaningful in api mode - the workspace list
+ *  and invites live there - but it cannot touch anything the backend holds,
+ *  which Settings says in as many words. */
 export const resetLocalData = local.resetLocalData;
 export const storageUsage = local.storageUsage;
 

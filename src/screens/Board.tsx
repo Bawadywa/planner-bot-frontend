@@ -140,7 +140,9 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
           </div>
         ) : (
           <div className="list">
-            {tasks.map((task) => (
+            {tasks.map((task) => {
+              const priority = priorityOf(task.priority_code);
+              return (
               <div key={task.id} className={`row task${task.done ? " done" : ""}`}>
                 {showDone && (
                   <button
@@ -163,12 +165,22 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
                 >
                   <div className="row-title">
                     {task.title}
-                    {/* Only the urgent end is marked. Tagging all three would
-                        put a badge on every row and mark nothing out. Keyed on
-                        tone, not the code, so a renumbering cannot invert it. */}
-                    {!task.done && priorityOf(task.priority_code).tone === "urgent" && (
-                      <span className="tag priority urgent" style={{ marginLeft: 6 }}>
-                        {priorityOf(task.priority_code).label}
+                    {/* All three levels are marked, and the colour carries the
+                        ranking - see the .tag.priority rules in styles.css.
+                        Keyed on tone, not the code, so a renumbering on the
+                        backend cannot invert it.
+
+                        Not on a finished task: its priority is history, and a
+                        red badge on a struck-through row reads as something
+                        still needing attention. */}
+                    {!task.done && (
+                      <span
+                        className={`tag priority ${priority.tone}${
+                          priority.known ? "" : " unknown"
+                        }`}
+                        style={{ marginLeft: 6 }}
+                      >
+                        {priority.label}
                       </span>
                     )}
                   </div>
@@ -187,7 +199,8 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
 
                 {task.image && <img className="thumb" src={task.image} alt="" />}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

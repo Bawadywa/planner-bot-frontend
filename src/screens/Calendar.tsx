@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import * as api from "../api";
 import { ChevronLeft, ChevronRight } from "../components/Icons";
 import { haptic } from "../telegram";
+import { heaviestTone, priorityOf } from "../lib/priority";
 import {
   formatDue,
   formatFullDate,
@@ -133,8 +134,17 @@ export function Calendar({ onOpenTask }: CalendarProps) {
 
           {cells.map((cell) => {
             const dayTasks = byDay.get(cell.key) ?? [];
-            const open = dayTasks.filter((t) => !t.done);
-            const overdue = open.length > 0 && cell.key < today;
+            const open = dayTasks.filter((task) => !task.done);
+
+            /* What the cell paints itself. Overdue beats priority - a deadline
+               already missed is more urgent than any label on a task that is
+               still ahead - and a day with nothing open stays blank. */
+            const load =
+              open.length === 0
+                ? ""
+                : cell.key < today
+                  ? "load-overdue"
+                  : `load-${heaviestTone(open.map((task) => task.priority_code))}`;
 
             return (
               <button
@@ -143,18 +153,25 @@ export function Calendar({ onOpenTask }: CalendarProps) {
                   "cal-day",
                   cell.inMonth ? "" : "pad",
                   cell.key === today ? "today" : "",
+                  load,
                 ]
                   .filter(Boolean)
                   .join(" ")}
                 aria-pressed={cell.key === selected}
-                aria-label={formatFullDate(cell.key)}
+                /* The tint is the whole signal for a sighted user, so the count
+                   has to be spoken - a date alone would say nothing about why
+                   this cell looks different from its neighbours. */
+                aria-label={
+                  open.length === 0
+                    ? formatFullDate(cell.key)
+                    : `${formatFullDate(cell.key)}, ${t("boards.open", { count: open.length })}`
+                }
                 onClick={() => {
                   haptic();
                   setSelected(cell.key);
                 }}
               >
                 <span className="num">{fromKey(cell.key).getDate()}</span>
-                {open.length > 0 && <span className={`dot${overdue ? " overdue" : ""}`} />}
               </button>
             );
           })}
@@ -181,7 +198,19 @@ export function Calendar({ onOpenTask }: CalendarProps) {
                 }}
               >
                 <div className="row-main">
-                  <div className="row-title">{task.title}</div>
+                  <div className="row-title">
+                    {task.title}
+                    {!task.done && (
+                      <span
+                        className={`tag priority ${priorityOf(task.priority_code).tone}${
+                          priorityOf(task.priority_code).known ? "" : " unknown"
+                        }`}
+                        style={{ marginLeft: 6 }}
+                      >
+                        {priorityOf(task.priority_code).label}
+                      </span>
+                    )}
+                  </div>
                   <div className="row-sub">
                     {boardTitle.get(task.board_id) ?? t("calendar.noBoard")}
                   </div>
