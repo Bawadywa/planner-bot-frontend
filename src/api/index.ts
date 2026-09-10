@@ -17,6 +17,7 @@
 import * as local from "./local";
 import * as remote from "./remote";
 import { DEBUG, dataSource, serverConfigured, unusableReason } from "../lib/http";
+import { t, type Key } from "../i18n";
 import type { Board, ID, Task, User } from "../types";
 
 export { ApiError } from "../lib/http";
@@ -52,7 +53,15 @@ const served = {
      `tasks` - it is the finest grain the hiding rule has needed, and the next
      column to arrive late will want the same treatment. */
   taskDone: serverBacked,
-  comments: false,
+  /* On. backend/app/main.py serves POST, PUT, DELETE /comment and
+     GET /comments?task_id=, and Comment has its task_id column.
+
+     One gap is left and it is in CommentRead, not in the routes: the schema
+     returns `content` and `image` only, so a row arrives with no id, no
+     user_id and no created_at. That is NOT hidden behind this flag, because
+     hiding it would look like comments are simply unfinished. It surfaces as
+     a named error instead - see listComments() in remote.ts. */
+  comments: serverBacked,
   team: false,
   invites: false,
 };
@@ -84,21 +93,25 @@ export function isAvailable(feature: Feature): boolean {
  *  into them: the first version of this lived as a paragraph inside Board.tsx
  *  and was describing a missing foreign key for days after the column landed.
  *  One place to edit, and flipping a flag above retires the sentence with it. */
-const missing: Record<Feature, string> = {
-  identity: "",
-  boards: "",
-  tasks: "",
-  taskDone: "Marking a task done needs a `done` column on the Task model.",
-  comments:
-    "Comments need a table with task_id and author_id, and routes to read and post them.",
-  team: "The team list needs a membership table and a route to read it.",
-  invites:
-    "Invites need a table with a unique token, and routes to mint and redeem one.",
+const missing: Record<Feature, Key | null> = {
+  identity: null,
+  boards: null,
+  tasks: null,
+  taskDone: "missing.taskDone",
+  comments: "missing.comments",
+  team: "missing.team",
+  invites: "missing.invites",
 };
 
-/** Why a feature is hidden, or null when it is not. */
+/** Why a feature is hidden, or null when it is not.
+ *
+ *  Resolved through the dictionary at CALL time rather than stored as a string:
+ *  the sentence is on screen while someone switches language in Settings, and a
+ *  value captured at import would still be in the old one. */
 export function missingFor(feature: Feature): string | null {
-  return served[feature] || !serverBacked ? null : missing[feature];
+  const key = missing[feature];
+  if (!key || served[feature] || !serverBacked) return null;
+  return t(key);
 }
 
 /* --------------------------------------------------------------- identity -- */
@@ -202,9 +215,14 @@ export async function listAllTasks(): Promise<Task[]> {
 
 /* --------------------------------------------------------------- comments -- */
 
-export const listComments = local.listComments;
-export const createComment = local.createComment;
-export const deleteComment = local.deleteComment;
+/* Four calls, one flag. The remote half targets POST/PUT/DELETE /comment as
+   main.py already declares them, plus the GET /comments?task_id= it does not -
+   reading a thread back is the piece with no server-side equivalent at all, so
+   there was nothing to point the list at but the route that has to exist. */
+export const listComments = served.comments ? remote.listComments : local.listComments;
+export const createComment = served.comments ? remote.createComment : local.createComment;
+export const updateComment = served.comments ? remote.updateComment : local.updateComment;
+export const deleteComment = served.comments ? remote.deleteComment : local.deleteComment;
 
 /* ------------------------------------------------------------------- team -- */
 
@@ -222,9 +240,9 @@ export const revokeInvite = local.revokeInvite;
 
 /* ------------------------------------------------------------------ local -- */
 
-/** Wipes the browser store. Still meaningful in api mode - tasks, comments,
- *  team and invites all live there - but it cannot touch anything the backend
- *  holds, which Settings says in as many words. */
+/** Wipes the browser store. Still meaningful in api mode - team and invites
+ *  live there - but it cannot touch anything the backend holds, which Settings
+ *  says in as many words. */
 export const resetLocalData = local.resetLocalData;
 export const storageUsage = local.storageUsage;
 

@@ -2,7 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import * as api from "../api";
 import { ChevronLeft, ChevronRight } from "../components/Icons";
 import { haptic } from "../telegram";
-import { DOW, MONTHS, formatDue, fromKey, monthGrid, todayKey } from "../lib/date";
+import {
+  formatDue,
+  formatFullDate,
+  fromKey,
+  monthGrid,
+  monthNames,
+  todayKey,
+  weekdayInitials,
+} from "../lib/date";
+import { useT } from "../i18n";
 import type { Board, ID, Task } from "../types";
 
 interface CalendarProps {
@@ -12,6 +21,7 @@ interface CalendarProps {
 /** Deadlines across every board the user can see, on a month grid. A day with
  *  open work gets a dot; a day with something overdue gets a red one. */
 export function Calendar({ onOpenTask }: CalendarProps) {
+  const t = useT();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [boards, setBoards] = useState<Board[]>([]);
   const [selected, setSelected] = useState(todayKey());
@@ -24,9 +34,12 @@ export function Calendar({ onOpenTask }: CalendarProps) {
   useEffect(() => {
     void (async () => {
       try {
-        const [t, b] = await Promise.all([api.listAllTasks(), api.listBoards()]);
-        setTasks(t);
-        setBoards(b);
+        const [taskRows, boardRows] = await Promise.all([
+          api.listAllTasks(),
+          api.listBoards(),
+        ]);
+        setTasks(taskRows);
+        setBoards(boardRows);
       } catch (err) {
         // Both reads go through the board list, which is a network call in api
         // mode. The month grid renders either way; this only keeps the failure
@@ -58,6 +71,13 @@ export function Calendar({ onOpenTask }: CalendarProps) {
     [cursor.year, cursor.month],
   );
 
+  /* Rebuilt when the language changes, not only when the month does - `t` is a
+     stable function whose identity does not move, so the active language is
+     what has to be in the dependency list. Both come out of Intl rather than a
+     table; see lib/date.ts. */
+  const months = useMemo(() => monthNames(), [t]);
+  const weekdays = useMemo(() => weekdayInitials(), [t]);
+
   const today = todayKey();
   const selectedTasks = byDay.get(selected) ?? [];
 
@@ -70,7 +90,7 @@ export function Calendar({ onOpenTask }: CalendarProps) {
   return (
     <>
       <header className="topbar">
-        <h1>Calendar</h1>
+        <h1>{t("calendar.title")}</h1>
         <button
           className="btn btn-ghost"
           onClick={() => {
@@ -79,27 +99,35 @@ export function Calendar({ onOpenTask }: CalendarProps) {
             setSelected(today);
           }}
         >
-          Today
+          {t("calendar.today")}
         </button>
       </header>
 
       <div className="screen has-nav">
         <div className="cal-head">
-          <button className="icon-btn" aria-label="Previous month" onClick={() => shiftMonth(-1)}>
+          <button
+            className="icon-btn"
+            aria-label={t("calendar.prevMonth")}
+            onClick={() => shiftMonth(-1)}
+          >
             <ChevronLeft />
           </button>
           <span className="month">
-            {MONTHS[cursor.month]} {cursor.year}
+            {months[cursor.month]} {cursor.year}
           </span>
-          <button className="icon-btn" aria-label="Next month" onClick={() => shiftMonth(1)}>
+          <button
+            className="icon-btn"
+            aria-label={t("calendar.nextMonth")}
+            onClick={() => shiftMonth(1)}
+          >
             <ChevronRight />
           </button>
         </div>
 
         <div className="cal-grid">
-          {DOW.map((d, i) => (
+          {weekdays.map((day, i) => (
             <div key={i} className="cal-dow">
-              {d}
+              {day}
             </div>
           ))}
 
@@ -119,7 +147,7 @@ export function Calendar({ onOpenTask }: CalendarProps) {
                   .filter(Boolean)
                   .join(" ")}
                 aria-pressed={cell.key === selected}
-                aria-label={fromKey(cell.key).toDateString()}
+                aria-label={formatFullDate(cell.key)}
                 onClick={() => {
                   haptic();
                   setSelected(cell.key);
@@ -133,13 +161,13 @@ export function Calendar({ onOpenTask }: CalendarProps) {
         </div>
 
         <div className="section-head" style={{ marginTop: 22 }}>
-          <h2>{selected === today ? "Today" : formatDue(selected)}</h2>
+          <h2>{selected === today ? t("calendar.today") : formatDue(selected)}</h2>
           <span className="count">{selectedTasks.length}</span>
         </div>
 
         {selectedTasks.length === 0 ? (
           <div className="empty" style={{ padding: "28px 24px" }}>
-            <p style={{ margin: 0 }}>Nothing due on this day.</p>
+            <p style={{ margin: 0 }}>{t("calendar.nothingDue")}</p>
           </div>
         ) : (
           <div className="list">
@@ -154,7 +182,9 @@ export function Calendar({ onOpenTask }: CalendarProps) {
               >
                 <div className="row-main">
                   <div className="row-title">{task.title}</div>
-                  <div className="row-sub">{boardTitle.get(task.board_id) ?? "—"}</div>
+                  <div className="row-sub">
+                    {boardTitle.get(task.board_id) ?? t("calendar.noBoard")}
+                  </div>
                 </div>
                 <ChevronRight />
               </button>

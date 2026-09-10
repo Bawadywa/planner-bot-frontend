@@ -68,6 +68,20 @@ export const TrashIcon = ({ size = 18 }: IconProps) => (
   </svg>
 );
 
+export const PencilIcon = ({ size = 18 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="M4 20h4L20 8a2.8 2.8 0 0 0-4-4L4 16v4Z" />
+    <path d="m14.5 5.5 4 4" />
+  </svg>
+);
+
+export const LanguageIcon = ({ size = 18 }: IconProps) => (
+  <svg {...base(size)}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M3 12h18M12 3c2.5 2.6 3.8 5.7 3.8 9S14.5 18.4 12 21c-2.5-2.6-3.8-5.7-3.8-9S9.5 5.6 12 3Z" />
+  </svg>
+);
+
 export const ImageIcon = ({ size = 18 }: IconProps) => (
   <svg {...base(size)}>
     <rect x="3" y="4" width="18" height="16" rx="2.5" />

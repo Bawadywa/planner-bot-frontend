@@ -8,6 +8,7 @@ import { Settings } from "./screens/Settings";
 import { InviteAccept } from "./screens/InviteAccept";
 import { BoardIcon, CalendarIcon, SettingsIcon } from "./components/Icons";
 import { clearStartParam, haptic, pushBack, startInviteToken } from "./telegram";
+import { useT } from "./i18n";
 import type { ID, User } from "./types";
 
 type Tab = "boards" | "calendar" | "settings";
@@ -23,6 +24,8 @@ const showCalendar = api.isAvailable("tasks");
 type Pushed = { name: "board"; boardId: ID } | { name: "task"; taskId: ID };
 
 export function App() {
+  const t = useT();
+
   // undefined only while the launch identity is being resolved - there is no
   // signed-out state to model, because Telegram identifies the user before the
   // page loads. See signIn() in api/index.ts.
@@ -96,7 +99,7 @@ export function App() {
           onClick={() => switchTab("boards")}
         >
           <BoardIcon />
-          <span className="label">Taskboard</span>
+          <span className="label">{t("app.nav.boards")}</span>
         </button>
         {showCalendar && (
           <button
@@ -104,7 +107,7 @@ export function App() {
             onClick={() => switchTab("calendar")}
           >
             <CalendarIcon />
-            <span className="label">Calendar</span>
+            <span className="label">{t("app.nav.calendar")}</span>
           </button>
         )}
         <button
@@ -112,7 +115,7 @@ export function App() {
           onClick={() => switchTab("settings")}
         >
           <SettingsIcon />
-          <span className="label">Settings</span>
+          <span className="label">{t("app.nav.settings")}</span>
         </button>
       </nav>
 

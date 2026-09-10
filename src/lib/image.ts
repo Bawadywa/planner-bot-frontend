@@ -5,13 +5,15 @@
    When images move to the backend this whole file goes away: the file object
    gets posted as multipart and the column holds a key, not the bytes. */
 
+import { t } from "../i18n";
+
 const MAX_EDGE = 1280; // px on the longest side
 const QUALITY = 0.72; // JPEG quality
 const MAX_BYTES = 700 * 1024; // refuse anything still bigger after re-encoding
 
 export class ImageTooLargeError extends Error {
   constructor() {
-    super("That image is too large even after compression. Try a smaller one.");
+    super(t("image.tooLarge"));
     this.name = "ImageTooLargeError";
   }
 }
@@ -26,7 +28,7 @@ function loadBitmap(file: File): Promise<HTMLImageElement> {
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
-      reject(new Error("That file is not an image we can read."));
+      reject(new Error(t("image.notAnImage")));
     };
     img.src = url;
   });
@@ -45,7 +47,7 @@ export async function fileToDataUrl(file: File): Promise<string> {
   canvas.height = height;
 
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Canvas is unavailable in this browser.");
+  if (!ctx) throw new Error(t("image.noCanvas"));
   ctx.drawImage(img, 0, 0, width, height);
 
   const dataUrl = canvas.toDataURL("image/jpeg", QUALITY);

@@ -1,16 +1,20 @@
 import { useId, useRef, useState } from "react";
 import { fileToDataUrl } from "../lib/image";
 import { ImageIcon, TrashIcon } from "./Icons";
+import { useT } from "../i18n";
 
 interface ImagePickerProps {
   value: string | null;
   onChange: (dataUrl: string | null) => void;
+  /** Overrides the default "Image" heading. A caller that passes one owns its
+   *  translation. */
   label?: string;
 }
 
 /** Wraps a hidden <input type="file"> so the control can be styled, and runs
  *  every pick through the downscaler before handing back a data: URL. */
-export function ImagePicker({ value, onChange, label = "Image" }: ImagePickerProps) {
+export function ImagePicker({ value, onChange, label }: ImagePickerProps) {
+  const t = useT();
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -23,7 +27,7 @@ export function ImagePicker({ value, onChange, label = "Image" }: ImagePickerPro
     try {
       onChange(await fileToDataUrl(file));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not read that image.");
+      setError(err instanceof Error ? err.message : t("image.readFailed"));
     } finally {
       setBusy(false);
       // Reset the input, or picking the same file twice fires no change event.
@@ -34,7 +38,7 @@ export function ImagePicker({ value, onChange, label = "Image" }: ImagePickerPro
   return (
     <div className="field">
       <div className="label">
-        <span>{label}</span>
+        <span>{label ?? t("image.label")}</span>
       </div>
 
       <div className="picker">
@@ -55,14 +59,14 @@ export function ImagePicker({ value, onChange, label = "Image" }: ImagePickerPro
           onClick={() => inputRef.current?.click()}
         >
           <ImageIcon />
-          {busy ? "Processing…" : value ? "Replace" : "Attach"}
+          {busy ? t("image.processing") : value ? t("image.replace") : t("image.attach")}
         </button>
 
         {value && (
           <button
             type="button"
             className="icon-btn"
-            aria-label="Remove image"
+            aria-label={t("image.remove")}
             onClick={() => onChange(null)}
           >
             <TrashIcon />

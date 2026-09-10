@@ -12,22 +12,8 @@ import {
   shareToTelegram,
 } from "../telegram";
 import { displayName, handle, initials } from "../lib/user";
+import { LANGUAGES, useLang, useT } from "../i18n";
 import type { Board, ID, Invite, Member, User } from "../types";
-
-/** The line that rides along with the link in the shared message. Telegram
- *  shows it next to the link preview, so it has to make sense on its own -
- *  the recipient sees it before they know what Planner is. */
-const FALLBACK_NOTE =
-  "Telegram's share sheet is only available inside the Telegram app — the link " +
-  "opened in a browser tab instead. It is listed below, ready to copy.";
-
-function inviteText(boardTitles: string[]): string {
-  const what =
-    boardTitles.length === 1
-      ? `"${boardTitles[0]}"`
-      : `${boardTitles.length} boards`;
-  return `Join me on ${what} in Planner`;
-}
 
 const showTeam = api.isAvailable("team");
 const showInvites = api.isAvailable("invites");
@@ -41,6 +27,7 @@ interface SettingsProps {
 }
 
 export function Settings({ user, onReset }: SettingsProps) {
+  const t = useT();
   const [members, setMembers] = useState<Member[]>([]);
   const [boards, setBoards] = useState<Board[]>([]);
   const [invites, setInvites] = useState<Invite[]>([]);
@@ -66,9 +53,9 @@ export function Settings({ user, onReset }: SettingsProps) {
       // In api mode the board list is a network call, so this screen has to
       // survive the server being unreachable rather than rendering half-empty
       // with no explanation.
-      setError(err instanceof Error ? err.message : "Could not load your team.");
+      setError(err instanceof Error ? err.message : t("settings.loadFailed"));
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void load();
@@ -87,8 +74,25 @@ export function Settings({ user, onReset }: SettingsProps) {
     };
   }, []);
 
+  /** The line that rides along with the link in the shared message. Telegram
+   *  shows it next to the link preview, so it has to make sense on its own -
+   *  the recipient sees it before they know what Planner is.
+   *
+   *  Built at share time rather than held as a constant: the sender's language
+   *  is the one the message should be written in, and that can change while
+   *  this screen is open. */
+  function inviteText(boardTitles: string[]): string {
+    const what =
+      boardTitles.length === 1
+        ? `"${boardTitles[0]}"`
+        : t("settings.inviteBoards", { count: boardTitles.length });
+    return t("settings.inviteText", { what });
+  }
+
   async function remove(member: Member) {
-    const ok = await confirmAction(`Remove ${displayName(member)} from the team?`);
+    const ok = await confirmAction(
+      t("settings.confirmRemove", { name: displayName(member) }),
+    );
     if (!ok) return;
     try {
       await api.removeMember(member.id);
@@ -96,7 +100,7 @@ export function Settings({ user, onReset }: SettingsProps) {
       await load();
     } catch (err) {
       hapticError();
-      setError(err instanceof Error ? err.message : "Could not remove them.");
+      setError(err instanceof Error ? err.message : t("settings.removeFailed"));
     }
   }
 
@@ -104,15 +108,13 @@ export function Settings({ user, onReset }: SettingsProps) {
     haptic();
     const titles = invite.board_ids
       .map((id) => boards.find((b) => b.id === id)?.title)
-      .filter((t): t is string => Boolean(t));
+      .filter((title): title is string => Boolean(title));
     const shared = shareToTelegram(inviteLink(invite.token), inviteText(titles));
-    setNote(shared ? "" : FALLBACK_NOTE);
+    setNote(shared ? "" : t("settings.fallbackNote"));
   }
 
   async function revoke(invite: Invite) {
-    const ok = await confirmAction(
-      "Revoke this link? Anyone who already has it will not be able to join.",
-    );
+    const ok = await confirmAction(t("settings.confirmRevoke"));
     if (!ok) return;
     await api.revokeInvite(invite.id);
     haptic("medium");
@@ -120,9 +122,7 @@ export function Settings({ user, onReset }: SettingsProps) {
   }
 
   async function clearData() {
-    const ok = await confirmAction(
-      "Erase every board, task and comment stored in this browser? This cannot be undone.",
-    );
+    const ok = await confirmAction(t("settings.confirmErase"));
     if (!ok) return;
     await api.resetLocalData();
     onReset();
@@ -135,14 +135,14 @@ export function Settings({ user, onReset }: SettingsProps) {
   return (
     <>
       <header className="topbar">
-        <h1>Settings</h1>
+        <h1>{t("settings.title")}</h1>
       </header>
 
       <div className="screen has-nav">
         {error && <div className="error">{error}</div>}
 
         <div className="section-head">
-          <h2>Account</h2>
+          <h2>{t("settings.account")}</h2>
         </div>
         <div className="list">
           <div className="row" style={{ cursor: "default" }}>
@@ -153,17 +153,17 @@ export function Settings({ user, onReset }: SettingsProps) {
             )}
             <div className="row-main">
               <div className="row-title">{displayName(user)}</div>
-              <div className="row-sub">
-                {handle(user) ?? "Signed in with Telegram"}
-              </div>
+              <div className="row-sub">{handle(user) ?? t("settings.signedIn")}</div>
             </div>
           </div>
         </div>
 
+        <LanguageSection />
+
         {showTeam && (
           <>
             <div className="section-head" style={{ marginTop: 24 }}>
-              <h2>Team</h2>
+              <h2>{t("settings.team")}</h2>
               <span className="count">{members.length}</span>
             </div>
 
@@ -176,7 +176,7 @@ export function Settings({ user, onReset }: SettingsProps) {
                     <div className="row-title">{displayName(member)}</div>
                     <div className="row-sub">
                       {member.board_ids.length === 0
-                        ? "No boards yet"
+                        ? t("settings.noBoards")
                         : member.board_ids
                             .map(boardName)
                             .filter(Boolean)
@@ -185,16 +185,16 @@ export function Settings({ user, onReset }: SettingsProps) {
                   </div>
 
                   <span className={`tag ${member.role === "owner" ? "owner" : ""}`}>
-                    {member.role}
+                    {member.role === "owner" ? t("settings.roleOwner") : t("settings.roleMember")}
                   </span>
                   {member.status === "invited" && (
-                    <span className="tag invited">invited</span>
+                    <span className="tag invited">{t("settings.invited")}</span>
                   )}
 
                   {member.role !== "owner" && (
                     <button
                       className="icon-btn"
-                      aria-label={`Remove ${displayName(member)}`}
+                      aria-label={t("settings.removeAria", { name: displayName(member) })}
                       onClick={() => void remove(member)}
                     >
                       <TrashIcon />
@@ -215,12 +215,12 @@ export function Settings({ user, onReset }: SettingsProps) {
               disabled={boards.length === 0}
             >
               <PlusIcon />
-              Invite someone
+              {t("settings.invite")}
             </button>
 
             {boards.length === 0 && (
               <div className="hint" style={{ marginTop: 8 }}>
-                Create a board first — an invite grants access to specific boards.
+                {t("settings.inviteHint")}
               </div>
             )}
           </>
@@ -229,7 +229,7 @@ export function Settings({ user, onReset }: SettingsProps) {
         {invites.length > 0 && (
           <>
             <div className="section-head" style={{ marginTop: 24 }}>
-              <h2>Invite links</h2>
+              <h2>{t("settings.inviteLinks")}</h2>
               <span className="count">{invites.length}</span>
             </div>
 
@@ -241,7 +241,7 @@ export function Settings({ user, onReset }: SettingsProps) {
                   <div className="row-main">
                     <div className="row-title">
                       {invite.board_ids.map(boardName).filter(Boolean).join(", ") ||
-                        "Board deleted"}
+                        t("settings.boardDeleted")}
                     </div>
                     <div className="row-sub" style={{ wordBreak: "break-all" }}>
                       {inviteLink(invite.token)}
@@ -249,11 +249,11 @@ export function Settings({ user, onReset }: SettingsProps) {
                   </div>
 
                   {invite.accepted_at ? (
-                    <span className="tag">used</span>
+                    <span className="tag">{t("settings.used")}</span>
                   ) : (
                     <button
                       className="icon-btn"
-                      aria-label="Share this link again"
+                      aria-label={t("settings.shareAgain")}
                       onClick={() => shareAgain(invite)}
                     >
                       <SendIcon />
@@ -262,7 +262,7 @@ export function Settings({ user, onReset }: SettingsProps) {
 
                   <button
                     className="icon-btn"
-                    aria-label="Revoke this link"
+                    aria-label={t("settings.revoke")}
                     onClick={() => void revoke(invite)}
                   >
                     <TrashIcon />
@@ -274,19 +274,21 @@ export function Settings({ user, onReset }: SettingsProps) {
         )}
 
         <div className="section-head" style={{ marginTop: 24 }}>
-          <h2>Data</h2>
+          <h2>{t("settings.data")}</h2>
         </div>
         <div className="list">
           {api.serverBacked && (
             <div className="row" style={{ cursor: "default" }}>
               <div className="row-main">
-                <div className="row-title">Backend</div>
-                <div className="row-sub">
-                  Boards and your account are stored on the server.
-                </div>
+                <div className="row-title">{t("settings.backend")}</div>
+                <div className="row-sub">{t("settings.backendSub")}</div>
               </div>
               <span className={`tag ${health === "up" ? "owner" : ""}`}>
-                {health === "checking" ? "…" : health === "up" ? "online" : "offline"}
+                {health === "checking"
+                  ? t("common.checking")
+                  : health === "up"
+                    ? t("common.online")
+                    : t("common.offline")}
               </span>
             </div>
           )}
@@ -297,22 +299,22 @@ export function Settings({ user, onReset }: SettingsProps) {
           {api.serverBacked && signInError && (
             <div className="row" style={{ cursor: "default", alignItems: "flex-start" }}>
               <div className="row-main">
-                <div className="row-title">Account not registered</div>
+                <div className="row-title">{t("settings.notRegistered")}</div>
                 <div className="row-sub" style={{ whiteSpace: "normal" }}>
                   {signInError}
                 </div>
               </div>
-              <span className="tag invited">local</span>
+              <span className="tag invited">{t("settings.localTag")}</span>
             </div>
           )}
 
           <div className="row" style={{ cursor: "default" }}>
             <div className="row-main">
-              <div className="row-title">Stored in this browser</div>
+              <div className="row-title">{t("settings.storedHere")}</div>
               <div className="row-sub">
                 {api.serverBacked
-                  ? "Tasks, comments, team and invites — not on the server yet."
-                  : "Nothing is sent to a server yet — invites are local only."}
+                  ? t("settings.storedHereApi")
+                  : t("settings.storedHereLocal")}
               </div>
             </div>
             <div className="row-meta">{usage.label}</div>
@@ -321,7 +323,7 @@ export function Settings({ user, onReset }: SettingsProps) {
 
         <div className="stack" style={{ marginTop: 16 }}>
           <button className="btn btn-danger btn-block" onClick={() => void clearData()}>
-            Erase local data
+            {t("settings.erase")}
           </button>
         </div>
 
@@ -331,10 +333,11 @@ export function Settings({ user, onReset }: SettingsProps) {
       {inviting && (
         <InviteSheet
           boards={boards}
+          inviteText={inviteText}
           onClose={() => setInviting(false)}
           onInvited={async (sharedNatively) => {
             setInviting(false);
-            setNote(sharedNatively ? "" : FALLBACK_NOTE);
+            setNote(sharedNatively ? "" : t("settings.fallbackNote"));
             await load();
           }}
         />
@@ -345,15 +348,74 @@ export function Settings({ user, onReset }: SettingsProps) {
 
 /* ---------------------------------------------------------------------------- */
 
+/** The language switcher.
+ *
+ *  Chips rather than a <select>, for the same reason the priority picker uses
+ *  them: Telegram's webview opens a native picker over half the screen for a
+ *  select, and two options fit on one line. Every option is written in its own
+ *  language, so someone who landed in the wrong one by way of Telegram's
+ *  language_code can still find their way back.
+ *
+ *  The choice is per device - it lives in localStorage, because the backend has
+ *  no column to hang it on - which is what the sub-line says rather than
+ *  leaving people to discover it on their second phone. */
+function LanguageSection() {
+  const t = useT();
+  const { lang, setLang } = useLang();
+
+  return (
+    <>
+      <div className="section-head" style={{ marginTop: 24 }}>
+        <h2>{t("settings.language")}</h2>
+      </div>
+
+      <div className="list">
+        <div className="row" style={{ alignItems: "flex-start", cursor: "default" }}>
+          <div className="row-main">
+            <div className="row-sub" style={{ marginTop: 0, whiteSpace: "normal" }}>
+              {t("settings.languageSub")}
+            </div>
+            <div className="chips" style={{ marginTop: 10 }} role="radiogroup"
+                 aria-label={t("settings.language")}>
+              {LANGUAGES.map((option) => (
+                <button
+                  key={option.code}
+                  type="button"
+                  role="radio"
+                  aria-checked={lang === option.code}
+                  aria-pressed={lang === option.code}
+                  className="chip"
+                  lang={option.code}
+                  onClick={() => {
+                    haptic();
+                    setLang(option.code);
+                  }}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ---------------------------------------------------------------------------- */
+
 function InviteSheet({
   boards,
+  inviteText,
   onClose,
   onInvited,
 }: {
   boards: Board[];
+  inviteText: (boardTitles: string[]) => string;
   onClose: () => void;
   onInvited: (sharedNatively: boolean) => void | Promise<void>;
 }) {
+  const t = useT();
   const [picked, setPicked] = useState<ID[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -379,27 +441,24 @@ function InviteSheet({
       await onInvited(shared);
     } catch (err) {
       hapticError();
-      setError(err instanceof Error ? err.message : "Could not create the invite.");
+      setError(err instanceof Error ? err.message : t("settings.sheet.failed"));
       setBusy(false);
     }
   }
 
   return (
-    <Sheet title="Invite to a board" onClose={onClose}>
+    <Sheet title={t("settings.sheet.title")} onClose={onClose}>
       <form onSubmit={submit}>
         {error && <div className="error">{error}</div>}
 
-        {!botUsername && (
-          <div className="error">
-            BOT_USERNAME is not set in config.js — the link will point at
-            t.me/?startapp=… and open nothing.
-          </div>
-        )}
+        {!botUsername && <div className="error">{t("settings.sheet.noBotUsername")}</div>}
 
         <div className="field">
           <div className="label">
-            <span>Boards they can open</span>
-            <span className="limit">{picked.length} selected</span>
+            <span>{t("settings.sheet.boards")}</span>
+            <span className="limit">
+              {t("settings.sheet.selected", { count: picked.length })}
+            </span>
           </div>
           <div className="chips">
             {boards.map((board) => (
@@ -417,9 +476,7 @@ function InviteSheet({
         </div>
 
         <div className="hint" style={{ marginBottom: 14 }}>
-          Telegram opens its own share sheet next — search, recent chats and
-          contacts — and sends the link from you. Nothing leaves this device
-          until you pick someone there.
+          {t("settings.sheet.hint")}
         </div>
 
         <button
@@ -428,7 +485,7 @@ function InviteSheet({
           disabled={busy || picked.length === 0}
         >
           <SendIcon />
-          Choose a chat in Telegram
+          {t("settings.sheet.submit")}
         </button>
       </form>
     </Sheet>

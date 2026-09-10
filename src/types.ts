@@ -53,6 +53,24 @@ export interface Comment {
   created_at: string;
 }
 
+/** Who wrote a comment, as much as the store knows about them.
+ *
+ *  Deliberately shaped like lib/user.ts's Person plus the photo, so
+ *  displayName(), handle() and initials() apply to it unchanged - a comment
+ *  head and the account row in Settings are the same problem.
+ *
+ *  A separate type from User rather than a reuse of it, because a comment
+ *  author is a projection: no created_at, and nothing about roles or teams.
+ *  The server has no business shipping a thread's worth of team structure to
+ *  render a name and a circle. */
+export interface CommentAuthor {
+  id: ID;
+  first_name: string;
+  last_name: string | null;
+  username: string | null;
+  photo_url: string | null;
+}
+
 export type MemberRole = "owner" | "member";
 export type MemberStatus = "active" | "invited";
 

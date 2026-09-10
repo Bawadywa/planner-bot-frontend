@@ -16,6 +16,7 @@
    would only widen what CORS has to allow, for nothing.
    ============================================================================ */
 
+import { t } from "../i18n";
 import { initData } from "../telegram";
 
 /* ----------------------------------------------------------------- config -- */
@@ -90,7 +91,7 @@ function messageFrom(payload: unknown, status: number): string {
     }
   }
 
-  return `Request failed (${status})`;
+  return t("http.failed", { status });
 }
 
 /* --------------------------------------------------------------- requests -- */
@@ -124,7 +125,7 @@ export async function request<T>(
   options: RequestOptions = {},
 ): Promise<T> {
   if (!API_BASE) {
-    throw new ApiError(0, "No backend configured. Set API_BASE in config.js.");
+    throw new ApiError(0, t("http.noBackend"));
   }
 
   const headers: Record<string, string> = { Accept: "application/json" };
@@ -154,9 +155,7 @@ export async function request<T>(
     if (DEBUG) console.warn(`[planner] ${method} ${path} failed`, err);
     throw new ApiError(
       0,
-      controller.signal.aborted
-        ? "The server took too long to answer."
-        : "Could not reach the server. Check your connection.",
+      controller.signal.aborted ? t("http.timeout") : t("http.unreachable"),
     );
   } finally {
     clearTimeout(timer);

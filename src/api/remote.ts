@@ -17,14 +17,25 @@
      POST   /task        -> the created TaskRead
      PUT    /task        -> the updated TaskRead, every field replaced
      DELETE /task        -> {id} in the body
+     GET    /comments    -> list[CommentRead], filtered by ?task_id
+     POST   /comment     -> the created CommentRead
+     PUT    /comment     -> the updated CommentRead, content and image replaced
+     DELETE /comment     -> {id} in the body
      GET    /health      -> 200, empty body
 
-   Comments, team and invites have no routes yet, so api/index.ts leaves those
-   on the local store. `missing()` below is what a UI action with a local twin
-   but no server route raises instead - it must not silently succeed against a
-   copy the server will hand back again on the next load.
+   The comment routes are live. What is NOT finished is CommentRead, which
+   declares `content` and `image` and nothing else - so a comment comes back
+   with no id, no user_id and no created_at, none of which the client can
+   invent. The mappers below read all three when they are there and say
+   plainly when they are not, rather than dropping rows into an empty thread.
+
+   Team and invites have no routes at all and stay on the local store.
+   `missing()` below is what a UI action with a local twin but no server route
+   raises instead - it must not silently succeed against a copy the server will
+   hand back again on the next load.
    ============================================================================ */
 
+import { t } from "../i18n";
 import { tgUser } from "../telegram";
 import {
   ApiError,
@@ -40,14 +51,14 @@ import {
 } from "../lib/http";
 import { toPriorityCode } from "../lib/priority";
 import { boardOrder } from "../lib/taskOrder";
-import type { Board, ID, Task } from "../types";
-import type { Identity, TaskInput } from "./local";
+import type { Board, Comment, CommentAuthor, ID, Task } from "../types";
+import type { CommentView, Identity, TaskInput } from "./local";
 
 /** Raised for a UI action the backend has no route for. 501 rather than 404:
  *  the resource exists, the verb does not. The screens already show
  *  `err.message`, so it names the route that would fix it. */
 function missing(route: string): never {
-  throw new ApiError(501, `The backend has no ${route} route yet.`);
+  throw new ApiError(501, t("api.noRoute", { route }));
 }
 
 /** Ids are opaque strings up here and integers in the database, so anything
@@ -58,13 +69,7 @@ function missing(route: string): never {
  *  match nothing, which looks like a delete that quietly did nothing. */
 function numericId(id: ID): number {
   const n = Number(id);
-  if (!Number.isInteger(n)) {
-    throw new ApiError(
-      422,
-      "That board was created in local mode and does not exist on the server. " +
-        "Erase the local data in Settings.",
-    );
-  }
+  if (!Number.isInteger(n)) throw new ApiError(422, t("api.localRow"));
   return n;
 }
 
@@ -79,7 +84,7 @@ let confirmedId: ID | null = null;
 
 function currentUserId(): ID {
   const id = confirmedId ?? (tgUser ? String(tgUser.id) : null);
-  if (!id) throw new ApiError(401, "No Telegram identity for this launch");
+  if (!id) throw new ApiError(401, t("api.noIdentity"));
   return id;
 }
 
@@ -97,12 +102,12 @@ export async function signIn(): Promise<Identity> {
   const row = asRaw(await post<unknown>("/user"));
 
   const id = asId(row.id);
-  if (!id) throw new ApiError(502, "The server returned a user with no id.");
+  if (!id) throw new ApiError(502, t("api.noUserId"));
   confirmedId = id;
 
   return {
     id,
-    first_name: tgUser?.first_name ?? "Telegram user",
+    first_name: tgUser?.first_name ?? t("user.telegram"),
     last_name: tgUser?.last_name ?? null,
     username: tgUser?.username ?? null,
     photo_url: tgUser?.photo_url ?? null,
@@ -152,11 +157,11 @@ export async function listBoards(): Promise<Board[]> {
 export async function createBoard(title: string): Promise<Board> {
   const owner = currentUserId();
   const clean = title.trim();
-  if (!clean) throw new ApiError(422, "Title required");
-  if (clean.length > 30) throw new ApiError(422, "Title is limited to 30 characters");
+  if (!clean) throw new ApiError(422, t("api.titleRequired"));
+  if (clean.length > 30) throw new ApiError(422, t("api.titleTooLong"));
 
   const board = toBoard(asRaw(await post<unknown>("/taskboard", { title: clean })), owner);
-  if (!board) throw new ApiError(502, "The server returned a board with no id.");
+  if (!board) throw new ApiError(502, t("api.noBoardId"));
   return board;
 }
 
@@ -167,7 +172,7 @@ export async function createBoard(title: string): Promise<Board> {
  *  board screen; it collapses into a real fetch the moment the route lands. */
 export async function getBoard(id: ID): Promise<Board> {
   const board = (await listBoards()).find((b) => b.id === id);
-  if (!board) throw new ApiError(404, "Board not found");
+  if (!board) throw new ApiError(404, t("api.boardNotFound"));
   return board;
 }
 
@@ -261,18 +266,18 @@ export async function listTasks(boardId: ID): Promise<Task[]> {
 /** GET /task?id= */
 export async function getTask(id: ID): Promise<Task> {
   const task = toTask(asRaw(await get<unknown>("/task", { id: numericId(id) })));
-  if (!task) throw new ApiError(404, "Task not found");
+  if (!task) throw new ApiError(404, t("api.taskNotFound"));
   return task;
 }
 
 /** POST /task */
 export async function createTask(boardId: ID, input: TaskInput): Promise<Task> {
   const title = input.title.trim();
-  if (!title) throw new ApiError(422, "Title required");
+  if (!title) throw new ApiError(422, t("api.titleRequired"));
 
   const body = { ...taskBody(input), board_id: numericId(boardId) };
   const task = toTask(asRaw(await post<unknown>("/task", body)));
-  if (!task) throw new ApiError(502, "The server returned a task with no id.");
+  if (!task) throw new ApiError(502, t("api.noTaskId"));
   return task;
 }
 
@@ -291,13 +296,159 @@ export async function updateTask(
 
   const body = { ...taskBody(merged), id: numericId(id), done: merged.done };
   const task = toTask(asRaw(await request<unknown>("PUT", "/task", { body })));
-  if (!task) throw new ApiError(502, "The server returned a task with no id.");
+  if (!task) throw new ApiError(502, t("api.noTaskId"));
   return task;
 }
 
 /** DELETE /task - the id travels in the body, as the route declares. */
 export async function deleteTask(id: ID): Promise<void> {
   await request<unknown>("DELETE", "/task", { body: { id: numericId(id) } });
+}
+
+/* --------------------------------------------------------------- comments -- */
+
+/** CommentRead has carried the author two ways - a nested `user` object, and a
+ *  flat `user_id` before that - so both are read. Same treatment TaskRead's
+ *  board_id already gets in toTask(): a shape that has changed once will change
+ *  again, and the failure mode of guessing wrong is silent.
+ *
+ *  The profile is read only if a `first_name` actually came back. Telegram
+ *  guarantees that field for every account, so its absence means the server has
+ *  no profile to give - not that this particular person lacks a name - and the
+ *  row falls back to "You" or a generic word from `mine` at render time. Those
+ *  are translated, which is why they are picked in the component rather than
+ *  frozen here in whichever language the thread was fetched in.
+ *
+ *  Guessing is not on the table: inventing "User 482910" would read like a
+ *  name, and putting a raw Telegram id on screen would publish something the
+ *  app has no business showing.
+ *
+ *  `task_id` is read from the row but falls back to the task that was asked
+ *  for - a thread is only ever fetched one task at a time, so the fallback is
+ *  right whether or not the schema declares the column. */
+function toComment(raw: Raw, taskId: ID): CommentView | null {
+  const id = asId(raw.id);
+  if (!id) {
+    if (DEBUG) console.warn("[planner] unreadable comment row, dropped", raw);
+    return null;
+  }
+
+  const user = asRaw(raw.user);
+  const authorId = asId(user.id) ?? asId(raw.user_id) ?? asId(raw.author_id) ?? "";
+
+  const first = asString(user.first_name);
+  const author: CommentAuthor | null =
+    authorId && first
+      ? {
+          id: authorId,
+          first_name: first,
+          last_name: typeof user.last_name === "string" ? user.last_name : null,
+          username: typeof user.username === "string" ? user.username : null,
+          photo_url: typeof user.photo_url === "string" ? user.photo_url : null,
+        }
+      : null;
+
+  return {
+    id,
+    task_id: asId(raw.task_id) ?? taskId,
+    content: asString(raw.content),
+    image: typeof raw.image === "string" ? raw.image : null,
+    author_id: authorId,
+    created_at: asIso(raw.created_at),
+    author,
+    mine: authorId !== "" && authorId === currentUserId(),
+  };
+}
+
+/** The body POST and PUT share. Both schemas declare `content` and `image`
+ *  without defaults, which in Pydantic v2 means REQUIRED - so a null image is
+ *  sent explicitly rather than left out.
+ *
+ *  The image goes up as the data: URL the picker produced. Comment.image is a
+ *  LargeBinary column and the schema types it `bytes`, which Pydantic fills
+ *  from a JSON string by UTF-8 encoding it - a data: URL is ASCII, so it
+ *  round-trips unchanged. The same path Task.image already takes. */
+function commentBody(content: string, image: string | null): Raw {
+  return { content: content.trim().slice(0, 100), image };
+}
+
+/** GET /comments?task_id=
+ *
+ *  Oldest first, which is how a thread reads. The handler already orders by
+ *  created_at, but the sort is repeated here because the rows currently arrive
+ *  without one - see the note on the sort below. */
+export async function listComments(taskId: ID): Promise<CommentView[]> {
+  const rows = await get<unknown>("/comments", { task_id: numericId(taskId) });
+  const raw = Array.isArray(rows) ? rows : [];
+
+  const comments = raw
+    .map((row) => toComment(asRaw(row), taskId))
+    .filter((comment): comment is CommentView => comment !== null);
+
+  /* Rows came back and not one of them could be read. That is the CommentRead
+     gap, and an empty thread is the worst possible way to report it: it looks
+     exactly like a task nobody has commented on, so the natural next move is
+     to post another comment that also vanishes. Say what is wrong instead. */
+  if (raw.length > 0 && comments.length === 0) {
+    throw new ApiError(502, t("api.commentShape"));
+  }
+
+  /* Stable-sorted, so rows the server already ordered by created_at keep that
+     order even while every one of them is carrying the epoch for want of a
+     created_at field. */
+  return comments.sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
+
+/** POST /comment
+ *
+ *  A comment with an image and no text is allowed, so the guard below refuses
+ *  only when BOTH are empty. Comment.content is NOT NULL, which the empty
+ *  string satisfies - a null would not. */
+export async function createComment(
+  taskId: ID,
+  content: string,
+  image: string | null = null,
+): Promise<Comment> {
+  const clean = content.trim();
+  if (!clean && !image) throw new ApiError(422, t("api.writeSomething"));
+
+  const body = { ...commentBody(content, image), task_id: numericId(taskId) };
+  const comment = toComment(asRaw(await post<unknown>("/comment", body)), taskId);
+  /* The row IS in the database at this point - the POST succeeded and only the
+     response was unreadable. Raising anyway is deliberate: the caller reloads
+     the thread next, which fails the same way, and one message that names the
+     fix beats a comment that appears to post into nothing. */
+  if (!comment) throw new ApiError(502, t("api.commentShape"));
+  return comment;
+}
+
+/** PUT /comment - content and image are replaced together, as the route does.
+ *
+ *  The task is not in the response's reach, so the returned row is mapped
+ *  against the id it already carries; callers reload the thread anyway. */
+export async function updateComment(
+  id: ID,
+  content: string,
+  image: string | null = null,
+): Promise<Comment> {
+  const clean = content.trim();
+  if (!clean && !image) throw new ApiError(422, t("api.writeSomething"));
+
+  const body = { ...commentBody(content, image), id: numericId(id) };
+  const comment = toComment(asRaw(await request<unknown>("PUT", "/comment", { body })), "");
+  if (!comment) throw new ApiError(502, t("api.commentShape"));
+  return comment;
+}
+
+/** DELETE /comment - the id travels in the body, as the route declares.
+ *
+ *  The answer is ignored, which is just as well: the handler returns
+ *  SQLAlchemy's CursorResult, so the body says nothing about what happened.
+ *  Note that it answers 200 even when the id matched nothing, so a caller
+ *  cannot tell a delete from a no-op without re-reading the thread - which
+ *  TaskDetail does anyway. */
+export async function deleteComment(id: ID): Promise<void> {
+  await request<unknown>("DELETE", "/comment", { body: { id: numericId(id) } });
 }
 
 /* ----------------------------------------------------------------- health -- */

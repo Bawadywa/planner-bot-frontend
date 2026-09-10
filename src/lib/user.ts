@@ -5,6 +5,8 @@
    no username and no photo. Every helper here has to survive all three being
    absent, which is why they take the loose shape below rather than a User. */
 
+import { t } from "../i18n";
+
 export interface Person {
   first_name: string;
   last_name?: string | null;
@@ -19,7 +21,7 @@ export function displayName(person: Person): string {
     .join(" ")
     .trim();
   if (full) return full;
-  return person.username ? `@${person.username}` : "Telegram user";
+  return person.username ? `@${person.username}` : t("user.telegram");
 }
 
 /** The secondary line, or null when the account has no @username to show. */

@@ -16,6 +16,8 @@
    drift is the thing to design against: an unrecognised code is NOT quietly
    rounded to a default. See priorityOf() and toPriorityCode(). */
 
+import { t } from "../i18n";
+
 export type PriorityCode = 0 | 1 | 2;
 
 /** What the code MEANS, which is what the styling keys off. Kept separate from
@@ -24,11 +26,13 @@ export type PriorityTone = "calm" | "normal" | "urgent";
 
 export interface Priority {
   code: number;
-  /** name_en from the JSON, title-cased. What the chips and tags show. */
-  label: string;
-  /** Carried because the JSON has it and the bot speaks Ukrainian. Unused by
-   *  the UI, which is English throughout. */
-  label_uk: string;
+  /** What the chips and tags show, in the language the app is currently in.
+   *
+   *  A getter rather than a stored string: these objects are module constants
+   *  built once at import, and the language can change at any point after that.
+   *  Reading it at render time is what keeps a chip from staying English after
+   *  a switch in Settings. */
+  readonly label: string;
   tone: PriorityTone;
   /** False for a code this build has no label for, so the UI can mark it
    *  rather than present a guess as fact. */
@@ -43,9 +47,9 @@ export interface KnownPriority extends Priority {
 
 /* In the JSON's own order, so the two can be read side by side. */
 export const PRIORITIES: KnownPriority[] = [
-  { code: 0, label: "Low", label_uk: "низький", tone: "calm", known: true },
-  { code: 1, label: "Medium", label_uk: "середній", tone: "normal", known: true },
-  { code: 2, label: "High", label_uk: "високий", tone: "urgent", known: true },
+  { code: 0, get label() { return t("priority.low"); }, tone: "calm", known: true },
+  { code: 1, get label() { return t("priority.medium"); }, tone: "normal", known: true },
+  { code: 2, get label() { return t("priority.high"); }, tone: "urgent", known: true },
 ];
 
 /** Most urgent first - the order the picker shows, because that is how someone
@@ -66,8 +70,9 @@ const BY_CODE = new Map<number, KnownPriority>(PRIORITIES.map((p) => [p.code, p]
 function unknownPriority(code: number): Priority {
   return {
     code,
-    label: `Priority ${code}`,
-    label_uk: `Пріоритет ${code}`,
+    get label() {
+      return t("priority.unknown", { code });
+    },
     tone: "normal",
     known: false,
   };

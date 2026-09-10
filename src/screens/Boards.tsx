@@ -3,6 +3,7 @@ import * as api from "../api";
 import { Sheet } from "../components/Sheet";
 import { ChevronRight, PlusIcon } from "../components/Icons";
 import { haptic, hapticError } from "../telegram";
+import { useT } from "../i18n";
 import type { Board, ID, Task } from "../types";
 
 interface BoardsProps {
@@ -12,6 +13,7 @@ interface BoardsProps {
 const showTasks = api.isAvailable("tasks");
 
 export function Boards({ onOpenBoard }: BoardsProps) {
+  const t = useT();
   const [boards, setBoards] = useState<Board[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -23,28 +25,26 @@ export function Boards({ onOpenBoard }: BoardsProps) {
       // The task counts are skipped entirely when tasks are hidden - there is
       // nothing to count, and asking would only walk a store this mode does
       // not use.
-      const [b, t] = await Promise.all([
+      const [boardRows, taskRows] = await Promise.all([
         api.listBoards(),
         showTasks ? api.listAllTasks() : Promise.resolve([]),
       ]);
-      setBoards(b);
-      setTasks(t);
+      setBoards(boardRows);
+      setTasks(taskRows);
       // A failed sign-in does not fail this read - GET /taskboards just answers
       // with an empty list - so it has to be reported here or the first symptom
       // is a "User not found" 404 on whatever someone tries to create.
       const signIn = api.lastSignInError();
-      setError(
-        signIn ? `Not registered with the backend: ${signIn}. Boards cannot be saved.` : "",
-      );
+      setError(signIn ? t("boards.notRegistered", { reason: signIn }) : "");
     } catch (err) {
       // Reading boards is a network call in api mode. Without this the screen
       // never leaves its loading state and shows nothing at all - a blank page
       // where "could not reach the server" belongs.
-      setError(err instanceof Error ? err.message : "Could not load your boards.");
+      setError(err instanceof Error ? err.message : t("boards.loadFailed"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void load();
@@ -56,10 +56,10 @@ export function Boards({ onOpenBoard }: BoardsProps) {
   return (
     <>
       <header className="topbar">
-        <h1>Boards</h1>
+        <h1>{t("boards.title")}</h1>
         <button
           className="icon-btn"
-          aria-label="New board"
+          aria-label={t("boards.new")}
           onClick={() => setCreating(true)}
         >
           <PlusIcon />
@@ -71,15 +71,15 @@ export function Boards({ onOpenBoard }: BoardsProps) {
 
         {loading ? null : boards.length === 0 && !error ? (
           <div className="empty">
-            <div className="title">No boards yet</div>
+            <div className="title">{t("boards.empty.title")}</div>
             <p>
               {showTasks
-                ? "A board holds a set of tasks — one per project, client or week."
-                : "Create one to check that it reaches the backend and comes back."}
+                ? t("boards.empty.withTasks")
+                : t("boards.empty.boardsOnly")}
             </p>
             <button className="btn btn-primary" onClick={() => setCreating(true)}>
               <PlusIcon />
-              New board
+              {t("boards.new")}
             </button>
           </div>
         ) : (
@@ -99,7 +99,7 @@ export function Boards({ onOpenBoard }: BoardsProps) {
                     <div className="row-title">{board.title}</div>
                     {showTasks && (
                       <div className="row-sub">
-                        {open === 0 ? "All done" : `${open} open`}
+                        {open === 0 ? t("boards.allDone") : t("boards.open", { count: open })}
                       </div>
                     )}
                   </div>
@@ -132,6 +132,7 @@ interface CreateBoardSheetProps {
 }
 
 function CreateBoardSheet({ onClose, onCreated }: CreateBoardSheetProps) {
+  const t = useT();
   const [title, setTitle] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -148,19 +149,19 @@ function CreateBoardSheet({ onClose, onCreated }: CreateBoardSheetProps) {
       await onCreated();
     } catch (err) {
       hapticError();
-      setError(err instanceof Error ? err.message : "Could not create the board.");
+      setError(err instanceof Error ? err.message : t("boards.sheet.failed"));
       setBusy(false);
     }
   }
 
   return (
-    <Sheet title="New board" onClose={onClose}>
+    <Sheet title={t("boards.sheet.title")} onClose={onClose}>
       <form onSubmit={submit}>
         {error && <div className="error">{error}</div>}
 
         <label className="field">
           <div className="label">
-            <span>Title</span>
+            <span>{t("boards.sheet.field")}</span>
             {/* String(30) on TaskBoard.title */}
             <span className="limit">{title.length}/30</span>
           </div>
@@ -169,7 +170,7 @@ function CreateBoardSheet({ onClose, onCreated }: CreateBoardSheetProps) {
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             maxLength={30}
-            placeholder="Sprint 12"
+            placeholder={t("boards.sheet.placeholder")}
             autoFocus
           />
         </label>
@@ -179,7 +180,7 @@ function CreateBoardSheet({ onClose, onCreated }: CreateBoardSheetProps) {
           className="btn btn-primary btn-block"
           disabled={busy || !title.trim()}
         >
-          Create board
+          {t("boards.sheet.submit")}
         </button>
       </form>
     </Sheet>

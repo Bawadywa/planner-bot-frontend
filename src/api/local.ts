@@ -12,12 +12,21 @@
    to keep the shapes honest, not to enforce anything.
    ============================================================================ */
 
+import { t } from "../i18n";
 import { tgUser } from "../telegram";
-import { displayName } from "../lib/user";
 import { ApiError } from "../lib/http";
 import { DEFAULT_PRIORITY, toPriorityCode, type PriorityCode } from "../lib/priority";
 import { boardOrder } from "../lib/taskOrder";
-import type { Board, Comment, ID, Invite, Member, Task, User } from "../types";
+import type {
+  Board,
+  Comment,
+  CommentAuthor,
+  ID,
+  Invite,
+  Member,
+  Task,
+  User,
+} from "../types";
 
 const DB_KEY = "planner.db.v1";
 const CURRENT_USER_KEY = "planner.current-user.v1";
@@ -67,10 +76,7 @@ function writeDb(db: Db): void {
   } catch {
     // The usual cause is the ~5 MB quota, and the usual reason for hitting it
     // is attached images stored as data: URLs.
-    throw new ApiError(
-      507,
-      "Out of local storage. Remove some task images, or clear the app data in Settings.",
-    );
+    throw new ApiError(507, t("api.outOfStorage"));
   }
 }
 
@@ -111,7 +117,7 @@ function writeCurrentUserId(id: ID): void {
 function requireUser(): User {
   const id = readCurrentUserId();
   const user = id ? readDb().users.find((u) => u.id === id) : null;
-  if (!user) throw new ApiError(401, "No Telegram identity for this launch");
+  if (!user) throw new ApiError(401, t("api.noIdentity"));
   return user;
 }
 
@@ -247,8 +253,8 @@ export async function listBoards(): Promise<Board[]> {
 export async function createBoard(title: string): Promise<Board> {
   const user = requireUser();
   const clean = title.trim();
-  if (!clean) throw new ApiError(422, "Title required");
-  if (clean.length > 30) throw new ApiError(422, "Title is limited to 30 characters");
+  if (!clean) throw new ApiError(422, t("api.titleRequired"));
+  if (clean.length > 30) throw new ApiError(422, t("api.titleTooLong"));
 
   const db = readDb();
   const board: Board = {
@@ -265,10 +271,10 @@ export async function createBoard(title: string): Promise<Board> {
 /** PATCH /boards/{id} */
 export async function renameBoard(id: ID, title: string): Promise<Board> {
   const clean = title.trim();
-  if (!clean) throw new ApiError(422, "Title required");
+  if (!clean) throw new ApiError(422, t("api.titleRequired"));
   const db = readDb();
   const board = db.boards.find((b) => b.id === id);
-  if (!board) throw new ApiError(404, "Board not found");
+  if (!board) throw new ApiError(404, t("api.boardNotFound"));
   board.title = clean.slice(0, 30);
   writeDb(db);
   return board;
@@ -277,9 +283,11 @@ export async function renameBoard(id: ID, title: string): Promise<Board> {
 /** DELETE /boards/{id} - cascades the way ondelete="CASCADE" will. */
 export async function deleteBoard(id: ID): Promise<void> {
   const db = readDb();
-  const taskIds = new Set(db.tasks.filter((t) => t.board_id === id).map((t) => t.id));
+  const taskIds = new Set(
+    db.tasks.filter((task) => task.board_id === id).map((task) => task.id),
+  );
   db.boards = db.boards.filter((b) => b.id !== id);
-  db.tasks = db.tasks.filter((t) => t.board_id !== id);
+  db.tasks = db.tasks.filter((task) => task.board_id !== id);
   db.comments = db.comments.filter((c) => !taskIds.has(c.task_id));
   db.members = db.members.map((m) => ({
     ...m,
@@ -291,7 +299,7 @@ export async function deleteBoard(id: ID): Promise<void> {
 /** GET /boards/{id} */
 export async function getBoard(id: ID): Promise<Board> {
   const board = readDb().boards.find((b) => b.id === id);
-  if (!board) throw new ApiError(404, "Board not found");
+  if (!board) throw new ApiError(404, t("api.boardNotFound"));
   return board;
 }
 
@@ -308,7 +316,7 @@ export interface TaskInput {
 /** GET /boards/{board_id}/tasks */
 export async function listTasks(boardId: ID): Promise<Task[]> {
   return readDb()
-    .tasks.filter((t) => t.board_id === boardId)
+    .tasks.filter((task) => task.board_id === boardId)
     .sort(boardOrder);
 }
 
@@ -318,18 +326,18 @@ export async function listTasks(boardId: ID): Promise<Task[]> {
  *  boards come from the server while the tasks are still local. */
 export async function tasksForBoards(boardIds: ID[]): Promise<Task[]> {
   const visible = new Set(boardIds);
-  return readDb().tasks.filter((t) => visible.has(t.board_id));
+  return readDb().tasks.filter((task) => visible.has(task.board_id));
 }
 
 /** POST /boards/{board_id}/tasks */
 export async function createTask(boardId: ID, input: TaskInput): Promise<Task> {
   requireUser();
   const title = input.title.trim();
-  if (!title) throw new ApiError(422, "Title required");
+  if (!title) throw new ApiError(422, t("api.titleRequired"));
 
   const db = readDb();
   if (!db.boards.some((b) => b.id === boardId))
-    throw new ApiError(404, "Board not found");
+    throw new ApiError(404, t("api.boardNotFound"));
 
   const task: Task = {
     id: uid(),
@@ -353,8 +361,8 @@ export async function updateTask(
   patch: Partial<Omit<Task, "id" | "board_id" | "created_at">>,
 ): Promise<Task> {
   const db = readDb();
-  const task = db.tasks.find((t) => t.id === id);
-  if (!task) throw new ApiError(404, "Task not found");
+  const task = db.tasks.find((row) => row.id === id);
+  if (!task) throw new ApiError(404, t("api.taskNotFound"));
   Object.assign(task, patch);
   task.title = task.title.slice(0, 30);
   task.description = task.description.slice(0, 100);
@@ -365,36 +373,68 @@ export async function updateTask(
 /** DELETE /tasks/{id} */
 export async function deleteTask(id: ID): Promise<void> {
   const db = readDb();
-  db.tasks = db.tasks.filter((t) => t.id !== id);
+  db.tasks = db.tasks.filter((task) => task.id !== id);
   db.comments = db.comments.filter((c) => c.task_id !== id);
   writeDb(db);
 }
 
 /** GET /tasks/{id} */
 export async function getTask(id: ID): Promise<Task> {
-  const task = readDb().tasks.find((t) => t.id === id);
-  if (!task) throw new ApiError(404, "Task not found");
+  const task = readDb().tasks.find((row) => row.id === id);
+  if (!task) throw new ApiError(404, t("api.taskNotFound"));
   return task;
 }
 
 /* --------------------------------------------------------------- comments -- */
 
 export interface CommentView extends Comment {
-  author_name: string;
+  /** Who wrote it, or null when the store has no profile for them.
+   *
+   *  Null is not a failure - it is the normal answer whenever the backend has
+   *  nothing to join on. The words shown in its place ("You", "Teammate") are
+   *  picked at RENDER time rather than stored here, so they follow a language
+   *  switch instead of freezing in whichever language the thread was fetched
+   *  in. */
+  author: CommentAuthor | null;
+  /** Whether the launched user wrote it, which is what the edit and delete
+   *  buttons are gated on.
+   *
+   *  Not a nicety: every comment route in backend/app/main.py filters on
+   *  `Comment.user_id == user.id`, so someone else's comment cannot be edited
+   *  or removed at all. Offering the buttons anyway would turn a rule the
+   *  server enforces into a 404 the user has to discover by tapping. */
+  mine: boolean;
 }
 
-/** GET /tasks/{task_id}/comments - joined with the author the way the `author`
- *  relationship on the Comment model will be. */
+/** GET /comments?task_id= - joined with the author the way the `user`
+ *  relationship on the Comment model does. */
 export async function listComments(taskId: ID): Promise<CommentView[]> {
+  const me = readCurrentUserId();
   const db = readDb();
-  const byId = new Map(db.users.map((u) => [u.id, displayName(u)]));
+  const byId = new Map(db.users.map((u) => [u.id, u]));
+
   return db.comments
     .filter((c) => c.task_id === taskId)
     .sort((a, b) => a.created_at.localeCompare(b.created_at))
-    .map((c) => ({ ...c, author_name: byId.get(c.author_id) ?? "Unknown" }));
+    .map((c) => {
+      const user = byId.get(c.author_id);
+      return {
+        ...c,
+        author: user
+          ? {
+              id: user.id,
+              first_name: user.first_name,
+              last_name: user.last_name,
+              username: user.username,
+              photo_url: user.photo_url,
+            }
+          : null,
+        mine: c.author_id === me,
+      };
+    });
 }
 
-/** POST /tasks/{task_id}/comments */
+/** POST /comment */
 export async function createComment(
   taskId: ID,
   content: string,
@@ -402,7 +442,7 @@ export async function createComment(
 ): Promise<Comment> {
   const user = requireUser();
   const clean = content.trim();
-  if (!clean && !image) throw new ApiError(422, "Write something first");
+  if (!clean && !image) throw new ApiError(422, t("api.writeSomething"));
 
   const db = readDb();
   const comment: Comment = {
@@ -418,7 +458,28 @@ export async function createComment(
   return comment;
 }
 
-/** DELETE /comments/{id} */
+/** PUT /comment - content and image are replaced together, which is what the
+ *  route does; there is no partial patch to mirror. */
+export async function updateComment(
+  id: ID,
+  content: string,
+  image: string | null = null,
+): Promise<Comment> {
+  requireUser();
+  const clean = content.trim();
+  if (!clean && !image) throw new ApiError(422, t("api.writeSomething"));
+
+  const db = readDb();
+  const comment = db.comments.find((c) => c.id === id);
+  if (!comment) throw new ApiError(404, t("api.commentNotFound"));
+
+  comment.content = clean.slice(0, 100);
+  comment.image = image;
+  writeDb(db);
+  return comment;
+}
+
+/** DELETE /comment */
 export async function deleteComment(id: ID): Promise<void> {
   const db = readDb();
   db.comments = db.comments.filter((c) => c.id !== id);
@@ -437,7 +498,7 @@ export async function listMembers(): Promise<Member[]> {
 export async function setMemberBoards(id: ID, boardIds: ID[]): Promise<Member> {
   const db = readDb();
   const member = db.members.find((m) => m.id === id);
-  if (!member) throw new ApiError(404, "Member not found");
+  if (!member) throw new ApiError(404, t("api.memberNotFound"));
   member.board_ids = boardIds;
   writeDb(db);
   return member;
@@ -447,7 +508,7 @@ export async function setMemberBoards(id: ID, boardIds: ID[]): Promise<Member> {
 export async function removeMember(id: ID): Promise<void> {
   const db = readDb();
   const member = db.members.find((m) => m.id === id);
-  if (member?.role === "owner") throw new ApiError(403, "The owner cannot be removed");
+  if (member?.role === "owner") throw new ApiError(403, t("api.ownerImmutable"));
   db.members = db.members.filter((m) => m.id !== id);
   writeDb(db);
 }
@@ -471,7 +532,7 @@ function inviteToken(): string {
 /** POST /invites */
 export async function createInvite(boardIds: ID[]): Promise<Invite> {
   const user = requireUser();
-  if (boardIds.length === 0) throw new ApiError(422, "Pick at least one board");
+  if (boardIds.length === 0) throw new ApiError(422, t("api.pickBoard"));
 
   const db = readDb();
   const invite: Invite = {
@@ -517,8 +578,8 @@ export async function acceptInvite(token: string): Promise<Invite> {
 
   const db = readDb();
   const invite = db.invites.find((i) => i.token === token);
-  if (!invite) throw new ApiError(404, "That invite link is no longer valid");
-  if (invite.accepted_at) throw new ApiError(409, "That invite has already been used");
+  if (!invite) throw new ApiError(404, t("api.inviteInvalid"));
+  if (invite.accepted_at) throw new ApiError(409, t("api.inviteUsed"));
 
   invite.accepted_by = user.id;
   invite.accepted_at = now();

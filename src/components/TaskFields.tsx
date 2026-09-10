@@ -1,4 +1,5 @@
 import { ImagePicker } from "./ImagePicker";
+import { useT } from "../i18n";
 import {
   DEFAULT_PRIORITY,
   PRIORITIES_BY_URGENCY,
@@ -34,6 +35,7 @@ interface TaskFieldsProps {
  *  length caps or ordering. The caps mirror the String(n) columns on the Task
  *  model. */
 export function TaskFields({ draft, onChange, autoFocus }: TaskFieldsProps) {
+  const t = useT();
   const set = <K extends keyof TaskDraft>(key: K, value: TaskDraft[K]) =>
     onChange({ ...draft, [key]: value });
 
@@ -41,7 +43,7 @@ export function TaskFields({ draft, onChange, autoFocus }: TaskFieldsProps) {
     <>
       <label className="field">
         <div className="label">
-          <span>Title</span>
+          <span>{t("fields.title")}</span>
           <span className="limit">{draft.title.length}/30</span>
         </div>
         <input
@@ -49,14 +51,14 @@ export function TaskFields({ draft, onChange, autoFocus }: TaskFieldsProps) {
           value={draft.title}
           onChange={(e) => set("title", e.target.value)}
           maxLength={30}
-          placeholder="Write the release notes"
+          placeholder={t("fields.titlePlaceholder")}
           autoFocus={autoFocus}
         />
       </label>
 
       <label className="field">
         <div className="label">
-          <span>Description</span>
+          <span>{t("fields.description")}</span>
           <span className="limit">{draft.description.length}/100</span>
         </div>
         <textarea
@@ -64,13 +66,13 @@ export function TaskFields({ draft, onChange, autoFocus }: TaskFieldsProps) {
           value={draft.description}
           onChange={(e) => set("description", e.target.value)}
           maxLength={100}
-          placeholder="Optional detail"
+          placeholder={t("fields.descriptionPlaceholder")}
         />
       </label>
 
       <label className="field">
         <div className="label">
-          <span>Deadline</span>
+          <span>{t("fields.deadline")}</span>
         </div>
         <input
           className="input"
@@ -86,9 +88,9 @@ export function TaskFields({ draft, onChange, autoFocus }: TaskFieldsProps) {
           toggle the first one. */}
       <div className="field">
         <div className="label">
-          <span>Priority</span>
+          <span>{t("fields.priority")}</span>
         </div>
-        <div className="chips" role="radiogroup" aria-label="Priority">
+        <div className="chips" role="radiogroup" aria-label={t("fields.priority")}>
           {PRIORITIES_BY_URGENCY.map((priority) => (
             <button
               key={priority.code}

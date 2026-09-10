@@ -11,8 +11,8 @@
 
    DATA_SOURCE
              'local'  - everything lives in this browser's localStorage
-             'api'    - identity and boards come from API_BASE. Tasks,
-                        comments, team and invites have no routes yet, so in
+             'api'    - identity, boards, tasks and comments come from
+                        API_BASE. Team and invites have no routes yet, so in
                         this mode their UI is HIDDEN rather than left running
                         against localStorage - otherwise they would look like
                         they work until the same board is opened on a second
@@ -26,8 +26,8 @@
                  authenticate with. A desktop `npm run dev` has none, which is
                  why the fallback exists rather than an error on every screen.
 
-             The two stores do not share ids: boards created in 'local' mode
-             have uuids, boards created in 'api' mode have the database's ints.
+             The two stores do not share ids: rows created in 'local' mode
+             have uuids, rows created in 'api' mode have the database's ints.
              Switching modes on a device that already has data leaves the old
              boards invisible and their tasks orphaned - erase the local data in
              Settings after switching.

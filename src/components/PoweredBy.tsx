@@ -1,4 +1,5 @@
 import { openLink } from "../telegram";
+import { useT } from "../i18n";
 
 const URL = "https://lyceedata.com";
 
@@ -6,9 +7,11 @@ const URL = "https://lyceedata.com";
  *  still looks like a link) outside Telegram; inside Telegram the click is
  *  handed to the client, which opens it in the in-app browser. */
 export function PoweredBy() {
+  const t = useT();
+
   return (
     <p className="powered">
-      Powered by{" "}
+      {t("powered.by")}{" "}
       <a
         href={URL}
         target="_blank"

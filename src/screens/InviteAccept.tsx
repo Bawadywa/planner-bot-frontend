@@ -3,6 +3,7 @@ import * as api from "../api";
 import { Sheet } from "../components/Sheet";
 import { CheckIcon } from "../components/Icons";
 import { haptic, hapticError } from "../telegram";
+import { useT } from "../i18n";
 import type { Board, Invite } from "../types";
 
 interface InviteAcceptProps {
@@ -20,6 +21,7 @@ const showInvites = api.isAvailable("invites");
 /** Shown when the app was launched from an invite link - either
  *  t.me/<bot>?startapp=inv_… or the bot's WebApp button carrying ?inv=… */
 export function InviteAccept({ token, onDone }: InviteAcceptProps) {
+  const t = useT();
   const [lookup, setLookup] = useState<Lookup>({ state: "loading" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -44,7 +46,7 @@ export function InviteAccept({ token, onDone }: InviteAcceptProps) {
       try {
         boards = await api.listBoards();
       } catch (err) {
-        if (live) setError(err instanceof Error ? err.message : "Could not load the boards.");
+        if (live) setError(err instanceof Error ? err.message : t("invite.loadFailed"));
       }
       if (!live) return;
       setLookup(
@@ -60,7 +62,7 @@ export function InviteAccept({ token, onDone }: InviteAcceptProps) {
     return () => {
       live = false;
     };
-  }, [token]);
+  }, [token, t]);
 
   async function join() {
     if (busy) return;
@@ -72,16 +74,16 @@ export function InviteAccept({ token, onDone }: InviteAcceptProps) {
       setJoined(true);
     } catch (err) {
       hapticError();
-      setError(err instanceof Error ? err.message : "Could not accept that invite.");
+      setError(err instanceof Error ? err.message : t("invite.acceptFailed"));
       setBusy(false);
     }
   }
 
   return (
-    <Sheet title="You were invited" onClose={onDone}>
+    <Sheet title={t("invite.title")} onClose={onDone}>
       {error && <div className="error">{error}</div>}
 
-      {lookup.state === "loading" && <div className="hint">Checking the link…</div>}
+      {lookup.state === "loading" && <div className="hint">{t("invite.checking")}</div>}
 
       {/* The demo's honest dead end. Invites live in localStorage, so a link
           opened anywhere other than the device that made it cannot resolve -
@@ -89,19 +91,12 @@ export function InviteAccept({ token, onDone }: InviteAcceptProps) {
           endpoint, and saying so beats showing a broken-looking error. */}
       {lookup.state === "unknown" && (
         <>
-          <div className="hint">
-            This link carries the token <code>{token}</code>, and Telegram
-            delivered it to the app correctly — that is the whole handoff
-            working.
-          </div>
+          <div className="hint">{t("invite.unknownHandoff", { token })}</div>
           <div className="hint" style={{ marginTop: 10 }}>
-            It cannot be redeemed here because invites are still stored in the
-            browser that created them. Once the backend has an
-            <code> /invites</code> table, this is where the board would be
-            joined.
+            {t("invite.unknownWhy")}
           </div>
           <button className="btn btn-secondary btn-block" style={{ marginTop: 14 }} onClick={onDone}>
-            Close
+            {t("common.close")}
           </button>
         </>
       )}
@@ -110,11 +105,11 @@ export function InviteAccept({ token, onDone }: InviteAcceptProps) {
         <>
           <div className="field">
             <div className="label">
-              <span>Boards this link opens</span>
+              <span>{t("invite.boards")}</span>
             </div>
             <div className="chips">
               {lookup.boards.length === 0 ? (
-                <span className="hint">Those boards have since been deleted.</span>
+                <span className="hint">{t("invite.boardsDeleted")}</span>
               ) : (
                 lookup.boards.map((board) => (
                   <span key={board.id} className="chip" aria-pressed>
@@ -126,20 +121,20 @@ export function InviteAccept({ token, onDone }: InviteAcceptProps) {
           </div>
 
           {lookup.invite.accepted_at ? (
-            <div className="hint">This link has already been used.</div>
+            <div className="hint">{t("invite.alreadyUsed")}</div>
           ) : (
             <button
               className="btn btn-primary btn-block"
               disabled={busy || lookup.boards.length === 0}
               onClick={() => void join()}
             >
-              Join
+              {t("invite.join")}
             </button>
           )}
 
           {lookup.invite.accepted_at && (
             <button className="btn btn-secondary btn-block" style={{ marginTop: 10 }} onClick={onDone}>
-              Close
+              {t("common.close")}
             </button>
           )}
         </>
@@ -149,12 +144,12 @@ export function InviteAccept({ token, onDone }: InviteAcceptProps) {
         <>
           <div className="empty">
             <div className="title">
-              <CheckIcon /> You're in
+              <CheckIcon /> {t("invite.joined")}
             </div>
-            <p>The board is on your Taskboard tab now.</p>
+            <p>{t("invite.joinedBody")}</p>
           </div>
           <button className="btn btn-primary btn-block" onClick={onDone}>
-            Open Planner
+            {t("invite.open")}
           </button>
         </>
       )}

@@ -6,6 +6,7 @@ import { CheckIcon, ChevronLeft, PlusIcon, TrashIcon } from "../components/Icons
 import { confirmAction, haptic, hapticError, inTelegram } from "../telegram";
 import { dueState, formatDue } from "../lib/date";
 import { priorityOf } from "../lib/priority";
+import { useT } from "../i18n";
 import type { Board as BoardType, ID, Task } from "../types";
 
 interface BoardProps {
@@ -18,6 +19,7 @@ const showTasks = api.isAvailable("tasks");
 const showDone = api.isAvailable("taskDone");
 
 export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
+  const t = useT();
   const [board, setBoard] = useState<BoardType | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [creating, setCreating] = useState(false);
@@ -25,12 +27,12 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
 
   const load = useCallback(async () => {
     try {
-      const [b, t] = await Promise.all([
+      const [boardRow, taskRows] = await Promise.all([
         api.getBoard(boardId),
         showTasks ? api.listTasks(boardId) : Promise.resolve([]),
       ]);
-      setBoard(b);
-      setTasks(t);
+      setBoard(boardRow);
+      setTasks(taskRows);
     } catch {
       // The board was deleted from another screen - there is nothing to show.
       onBack();
@@ -52,14 +54,14 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
       await api.updateTask(task.id, { done: !task.done });
       setTasks(await api.listTasks(boardId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save that.");
+      setError(err instanceof Error ? err.message : t("board.saveFailed"));
       await load();
     }
   }
 
   async function removeBoard() {
     const ok = await confirmAction(
-      `Delete "${board?.title}" and all of its tasks? This cannot be undone.`,
+      t("board.confirmDelete", { title: board?.title ?? "" }),
     );
     if (!ok) return;
     try {
@@ -67,7 +69,7 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
     } catch (err) {
       // The board is still there, and leaving the screen would say otherwise.
       hapticError();
-      setError(err instanceof Error ? err.message : "Could not delete the board.");
+      setError(err instanceof Error ? err.message : t("board.deleteFailed"));
       return;
     }
     haptic("medium");
@@ -82,7 +84,7 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
       <header className="topbar">
         {/* Telegram draws its own back arrow; a second one would be noise. */}
         {!inTelegram && (
-          <button className="icon-btn" aria-label="Back" onClick={onBack}>
+          <button className="icon-btn" aria-label={t("common.back")} onClick={onBack}>
             <ChevronLeft />
           </button>
         )}
@@ -91,16 +93,16 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
           {showTasks && (
             <span className="sub">
               {tasks.length === 0
-                ? "No tasks yet"
+                ? t("board.noTasks")
                 : showDone
-                  ? `${open} open · ${done} done`
-                  : `${tasks.length} ${tasks.length === 1 ? "task" : "tasks"}`}
+                  ? t("board.openDone", { open, done })
+                  : t("board.taskCount", { count: tasks.length })}
             </span>
           )}
         </h1>
         <button
           className="icon-btn"
-          aria-label="Delete board"
+          aria-label={t("board.deleteAria")}
           onClick={() => void removeBoard()}
         >
           <TrashIcon />
@@ -108,7 +110,7 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
         {showTasks && (
           <button
             className="icon-btn"
-            aria-label="New task"
+            aria-label={t("board.newTaskAria")}
             onClick={() => setCreating(true)}
           >
             <PlusIcon />
@@ -121,22 +123,19 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
 
         {!showTasks ? (
           <div className="empty">
-            <div className="title">Boards only, for now</div>
-            <p>
-              This board is saved on the backend. Tasks are not yet, so they are
-              hidden rather than written somewhere this board cannot see them.
-            </p>
+            <div className="title">{t("board.hidden.title")}</div>
+            <p>{t("board.hidden.body")}</p>
             <p className="hint" style={{ marginTop: 10 }}>
               {api.missingFor("tasks")}
             </p>
           </div>
         ) : tasks.length === 0 ? (
           <div className="empty">
-            <div className="title">Nothing here yet</div>
-            <p>Add the first task to this board.</p>
+            <div className="title">{t("board.empty.title")}</div>
+            <p>{t("board.empty.body")}</p>
             <button className="btn btn-primary" onClick={() => setCreating(true)}>
               <PlusIcon />
-              New task
+              {t("board.newTaskAria")}
             </button>
           </div>
         ) : (
@@ -147,7 +146,7 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
                   <button
                     className="check"
                     aria-pressed={task.done}
-                    aria-label={task.done ? "Mark as not done" : "Mark as done"}
+                    aria-label={task.done ? t("board.markNotDone") : t("board.markDone")}
                     onClick={() => void toggleDone(task)}
                   >
                     {task.done && <CheckIcon />}
@@ -216,6 +215,7 @@ interface CreateTaskSheetProps {
 }
 
 function CreateTaskSheet({ boardId, onClose, onCreated }: CreateTaskSheetProps) {
+  const t = useT();
   const [draft, setDraft] = useState<TaskDraft>(emptyDraft);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -232,13 +232,13 @@ function CreateTaskSheet({ boardId, onClose, onCreated }: CreateTaskSheetProps) 
       await onCreated();
     } catch (err) {
       hapticError();
-      setError(err instanceof Error ? err.message : "Could not create the task.");
+      setError(err instanceof Error ? err.message : t("board.sheet.failed"));
       setBusy(false);
     }
   }
 
   return (
-    <Sheet title="New task" onClose={onClose}>
+    <Sheet title={t("board.sheet.title")} onClose={onClose}>
       <form onSubmit={submit}>
         {error && <div className="error">{error}</div>}
 
@@ -249,7 +249,7 @@ function CreateTaskSheet({ boardId, onClose, onCreated }: CreateTaskSheetProps) 
           className="btn btn-primary btn-block"
           disabled={busy || !draft.title.trim()}
         >
-          Create task
+          {t("board.sheet.submit")}
         </button>
       </form>
     </Sheet>
