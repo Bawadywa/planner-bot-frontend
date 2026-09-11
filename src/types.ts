@@ -21,10 +21,31 @@ export interface User {
   created_at: string; // ISO 8601
 }
 
+/** A container for boards - Workspace in backend/app/models.py, where
+ *  TaskBoard.workspace_id points at it and User.workspace_id says which one a
+ *  person landed in.
+ *
+ *  Only the owner is modelled here. Membership is the `users` relationship on
+ *  the model and has no route to read it, so the picker lists what this
+ *  identity owns and nothing more. */
+export interface Workspace {
+  id: ID;
+  title: string; // String(50)
+  owner_id: ID;
+  created_at: string;
+}
+
 export interface Board {
   id: ID;
   title: string; // String(30)
   owner_id: ID;
+  /** Which workspace the board sits in - TaskBoard.workspace_id.
+   *
+   *  Null when nothing has said yet: TaskBoardRead does not carry the column,
+   *  so a board fetched from the server arrives without one and the data layer
+   *  fills it in from the local assignment map. See scopeBoards() in
+   *  api/local.ts. */
+  workspace_id: ID | null;
   created_at: string;
 }
 

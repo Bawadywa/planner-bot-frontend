@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import * as api from "../api";
 import { Sheet } from "../components/Sheet";
+import { CreateWorkspaceSheet } from "../components/CreateWorkspaceSheet";
 import { PoweredBy } from "../components/PoweredBy";
-import { PlusIcon, SendIcon, TrashIcon } from "../components/Icons";
+import { CheckIcon, PlusIcon, SendIcon, TrashIcon } from "../components/Icons";
 import {
   botUsername,
   confirmAction,
@@ -12,9 +13,11 @@ import {
   shareToTelegram,
 } from "../telegram";
 import { displayName, handle, initials } from "../lib/user";
+import { setActiveWorkspace, useActiveWorkspace } from "../lib/workspace";
 import { LANGUAGES, useLang, useT } from "../i18n";
-import type { Board, ID, Invite, Member, User } from "../types";
+import type { Board, ID, Invite, Member, User, Workspace } from "../types";
 
+const showWorkspaces = api.isAvailable("workspaces");
 const showWorkspace = api.isAvailable("workspace");
 const showInvites = api.isAvailable("invites");
 
@@ -28,9 +31,15 @@ interface SettingsProps {
 
 export function Settings({ user, onReset }: SettingsProps) {
   const t = useT();
+  /* Subscribed, not just read: creating or switching a workspace has to move
+     the tick in the list below without waiting for anything to refetch, and
+     the same store is what the picker in the Boards bar reads. */
+  const activeWorkspaceId = useActiveWorkspace();
   const [members, setMembers] = useState<Member[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [boards, setBoards] = useState<Board[]>([]);
   const [invites, setInvites] = useState<Invite[]>([]);
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [error, setError] = useState("");
   // Set when a share could not use Telegram's own sheet, which otherwise looks
@@ -40,12 +49,14 @@ export function Settings({ user, onReset }: SettingsProps) {
 
   const load = useCallback(async () => {
     try {
-      const [m, b, i] = await Promise.all([
+      const [m, w, b, i] = await Promise.all([
         showWorkspace ? api.listMembers() : Promise.resolve([]),
+        showWorkspaces ? api.listWorkspaces() : Promise.resolve([]),
         api.listBoards(),
         showInvites ? api.listInvites() : Promise.resolve([]),
       ]);
       setMembers(m);
+      setWorkspaces(w);
       setBoards(b);
       setInvites(i);
       setError("");
@@ -55,7 +66,7 @@ export function Settings({ user, onReset }: SettingsProps) {
       // with no explanation.
       setError(err instanceof Error ? err.message : t("settings.loadFailed"));
     }
-  }, [t]);
+  }, [t, activeWorkspaceId]);
 
   useEffect(() => {
     void load();
@@ -159,6 +170,64 @@ export function Settings({ user, onReset }: SettingsProps) {
         </div>
 
         <LanguageSection />
+
+        {showWorkspaces && (
+          <>
+            <div className="section-head" style={{ marginTop: 24 }}>
+              <h2>{t("workspaces.heading")}</h2>
+              <span className="count">{workspaces.length}</span>
+            </div>
+
+            <div className="list">
+              {workspaces.map((workspace) => {
+                const chosen = workspace.id === activeWorkspaceId;
+                return (
+                  <button
+                    key={workspace.id}
+                    className="row"
+                    role="radio"
+                    aria-checked={chosen}
+                    onClick={() => {
+                      haptic();
+                      /* The picker in the Boards bar reads the same store, so
+                         switching here and switching there are one action. */
+                      setActiveWorkspace(workspace.id);
+                    }}
+                  >
+                    <div className="row-main">
+                      <div className="row-title">{workspace.title}</div>
+                      <div className="row-sub">
+                        {workspace.owner_id === user.id
+                          ? t("workspaces.owned")
+                          : t("workspaces.shared")}
+                      </div>
+                    </div>
+                    {chosen && <CheckIcon />}
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              className="btn btn-secondary btn-block"
+              style={{ marginTop: 12 }}
+              onClick={() => {
+                haptic();
+                setCreatingWorkspace(true);
+              }}
+            >
+              <PlusIcon />
+              {t("workspaces.new")}
+            </button>
+
+            {/* Says where switching normally happens, so this list reads as a
+                place to manage workspaces rather than the only way to leave
+                one. */}
+            <div className="hint" style={{ marginTop: 8 }}>
+              {t("workspaces.settingsSub")}
+            </div>
+          </>
+        )}
 
         {showWorkspace && (
           <>
@@ -329,6 +398,20 @@ export function Settings({ user, onReset }: SettingsProps) {
 
         <PoweredBy />
       </div>
+
+      {creatingWorkspace && (
+        <CreateWorkspaceSheet
+          onClose={() => setCreatingWorkspace(false)}
+          onCreated={async (workspace) => {
+            setCreatingWorkspace(false);
+            /* Switch to it, the way the picker does: creating one is how you
+               say you want to be in it, and leaving the app in the old one
+               makes the new row look like it did nothing. */
+            setActiveWorkspace(workspace.id);
+            await load();
+          }}
+        />
+      )}
 
       {inviting && (
         <InviteSheet

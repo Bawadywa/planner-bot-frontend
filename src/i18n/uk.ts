@@ -24,6 +24,22 @@ export const uk: Record<Key, Phrase> = {
   "common.offline": "офлайн",
   "common.checking": "…",
 
+  /* ----------------------------------------------------------- workspaces -- */
+  "workspaces.default": "Особистий",
+  "workspaces.switch": "Змінити робочий простір",
+  "workspaces.heading": "Робочі простори",
+  "workspaces.new": "Новий робочий простір",
+  "workspaces.loadFailed": "Не вдалося завантажити робочі простори.",
+  "workspaces.owned": "Ваш власний",
+  "workspaces.shared": "Вам надали доступ",
+  "workspaces.settingsSub":
+    "Перемикатися між ними можна через назву угорі вкладки «Дошки».",
+  "workspaces.sheet.title": "Новий робочий простір",
+  "workspaces.sheet.field": "Назва",
+  "workspaces.sheet.placeholder": "Команда дизайну",
+  "workspaces.sheet.submit": "Створити",
+  "workspaces.sheet.failed": "Не вдалося створити робочий простір.",
+
   /* --------------------------------------------------------------- boards -- */
   "boards.title": "Дошки",
   "boards.new": "Нова дошка",
@@ -230,6 +246,8 @@ export const uk: Record<Key, Phrase> = {
   /* ------------------------------------------------------------------ api -- */
   "api.noIdentity": "Цей запуск не має ідентифікації Telegram",
   "api.titleRequired": "Потрібна назва",
+  "api.noWorkspace":
+    "Немає робочого простору для цієї дошки. Створіть його через перемикач угорі вкладки «Дошки».",
   "api.titleTooLong": "Назва обмежена 30 символами",
   "api.boardNotFound": "Дошку не знайдено",
   "api.taskNotFound": "Завдання не знайдено",
@@ -247,6 +265,7 @@ export const uk: Record<Key, Phrase> = {
   "api.noRoute": "На сервері ще немає маршруту {route}.",
   "api.noUserId": "Сервер повернув користувача без id.",
   "api.noBoardId": "Сервер повернув дошку без id.",
+  "api.noWorkspaceId": "Сервер повернув робочий простір без id.",
   "api.noTaskId": "Сервер повернув завдання без id.",
   "api.commentShape":
     "Сервер надіслав коментарі без id, тому жоден із них не можна показати. Додайте `id` до CommentRead у backend/app/schemas.py — response_model пропускає лише ті поля, які в ньому оголошені.",

@@ -28,6 +28,22 @@ export const en = {
   "common.offline": "offline",
   "common.checking": "…",
 
+  /* ----------------------------------------------------------- workspaces -- */
+  "workspaces.default": "Personal",
+  "workspaces.switch": "Switch workspace",
+  "workspaces.heading": "Workspaces",
+  "workspaces.new": "New workspace",
+  "workspaces.loadFailed": "Could not load your workspaces.",
+  "workspaces.owned": "You own this one",
+  "workspaces.shared": "Shared with you",
+  "workspaces.settingsSub":
+    "Switch between them from the name at the top of the Boards tab.",
+  "workspaces.sheet.title": "New workspace",
+  "workspaces.sheet.field": "Name",
+  "workspaces.sheet.placeholder": "Design team",
+  "workspaces.sheet.submit": "Create workspace",
+  "workspaces.sheet.failed": "Could not create the workspace.",
+
   /* --------------------------------------------------------------- boards -- */
   "boards.title": "Boards",
   "boards.new": "New board",
@@ -219,6 +235,8 @@ export const en = {
   "api.noIdentity": "No Telegram identity for this launch",
   "api.titleRequired": "Title required",
   "api.titleTooLong": "Title is limited to 30 characters",
+  "api.noWorkspace":
+    "No workspace to put this board in. Create one from the switcher at the top of the Boards tab.",
   "api.boardNotFound": "Board not found",
   "api.taskNotFound": "Task not found",
   "api.commentNotFound": "Comment not found",
@@ -235,6 +253,7 @@ export const en = {
   "api.noRoute": "The backend has no {route} route yet.",
   "api.noUserId": "The server returned a user with no id.",
   "api.noBoardId": "The server returned a board with no id.",
+  "api.noWorkspaceId": "The server returned a workspace with no id.",
   "api.noTaskId": "The server returned a task with no id.",
   "api.commentShape":
     "The server sent comments with no id, so none of them can be shown. Add `id` to CommentRead in backend/app/schemas.py — response_model only lets through the fields it declares.",

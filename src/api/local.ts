@@ -17,6 +17,7 @@ import { tgUser } from "../telegram";
 import { ApiError } from "../lib/http";
 import { DEFAULT_PRIORITY, toPriorityCode, type PriorityCode } from "../lib/priority";
 import { boardOrder } from "../lib/taskOrder";
+import { activeWorkspace } from "../lib/workspace";
 import type {
   Board,
   Comment,
@@ -26,6 +27,7 @@ import type {
   Member,
   Task,
   User,
+  Workspace,
 } from "../types";
 
 const DB_KEY = "planner.db.v1";
@@ -33,20 +35,32 @@ const CURRENT_USER_KEY = "planner.current-user.v1";
 
 interface Db {
   users: User[];
+  workspaces: Workspace[];
   boards: Board[];
   tasks: Task[];
   comments: Comment[];
   members: Member[];
   invites: Invite[];
+  /** board id -> workspace id, for boards whose own row cannot say.
+   *
+   *  Local mode only now, and within it only rows minted before the picker
+   *  existed. TaskBoardRead carries workspace_id and TaskBoardCreate accepts
+   *  one, so every board the backend hands back knows its own workspace and
+   *  never reaches scopeBoards() at all - api mode does not read this map.
+   *  Kept because local mode has no server to carry the column. It is
+   *  per-device, which is the honest limit of remembering it here. */
+  board_workspace: Record<ID, ID>;
 }
 
 const EMPTY_DB: Db = {
   users: [],
+  workspaces: [],
   boards: [],
   tasks: [],
   comments: [],
   members: [],
   invites: [],
+  board_workspace: {},
 };
 
 /* ---------------------------------------------------------------- storage -- */
@@ -235,6 +249,110 @@ export async function signIn(confirmed?: Identity): Promise<User> {
   return user;
 }
 
+/* ------------------------------------------------------------- workspaces -- */
+
+/** Creates the workspace every other row hangs off, if there is none.
+ *
+ *  Mirrors what POST /user in backend/app/main.py does at sign-up: a person
+ *  always has one workspace, so the picker is never empty and a board never has
+ *  nowhere to go. Runs on the read path rather than in signIn(), so a store
+ *  written before workspaces existed grows one on the next launch instead of
+ *  needing a migration step. */
+function ensureWorkspace(db: Db, owner: ID): Workspace {
+  const mine = db.workspaces.filter((w) => w.owner_id === owner);
+  if (mine.length > 0) return mine[0];
+
+  const workspace: Workspace = {
+    id: uid(),
+    title: t("workspaces.default"),
+    owner_id: owner,
+    created_at: now(),
+  };
+  db.workspaces.push(workspace);
+  writeDb(db);
+  return workspace;
+}
+
+/** GET /workspaces?user_id= */
+export async function listWorkspaces(): Promise<Workspace[]> {
+  const user = requireUser();
+  const db = readDb();
+  ensureWorkspace(db, user.id);
+  return db.workspaces
+    .filter((w) => w.owner_id === user.id)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
+
+/** POST /workspace */
+export async function createWorkspace(title: string): Promise<Workspace> {
+  const user = requireUser();
+  const clean = title.trim();
+  if (!clean) throw new ApiError(422, t("api.titleRequired"));
+
+  const db = readDb();
+  const workspace: Workspace = {
+    id: uid(),
+    // String(50) on Workspace.title, against the board title's 30 - a
+    // workspace name is a heading, not a row label.
+    title: clean.slice(0, 50),
+    owner_id: user.id,
+    created_at: now(),
+  };
+  db.workspaces.push(workspace);
+  writeDb(db);
+  return workspace;
+}
+
+/** Remembers which workspace a board belongs to.
+ *
+ *  Only needed for boards the server minted, which arrive with no workspace of
+ *  their own. A local board carries the column on its own row, the way
+ *  TaskBoard does. */
+export function assignBoard(boardId: ID, workspaceId: ID): void {
+  const db = readDb();
+  db.board_workspace[boardId] = workspaceId;
+  writeDb(db);
+}
+
+/** Fills in each board's workspace and keeps the ones in `workspaceId`.
+ *
+ *  Two sources, in order: the row itself, then the assignment map. A board with
+ *  neither is adopted into the FIRST workspace and the adoption is written
+ *  down - every board that predates the picker is one of those, as is every
+ *  board the server minted before the map had an entry for it.
+ *
+ *  Adopting into the first workspace rather than into the active one is what
+ *  makes a newly created workspace open EMPTY. Defaulting to the active one
+ *  would be less code and would put every unassigned board in every workspace,
+ *  so switching would appear to do nothing at all. */
+export function scopeBoards(boards: Board[], workspaceId: ID): Board[] {
+  const db = readDb();
+  const owner = readCurrentUserId();
+  const home = db.workspaces.find((w) => w.owner_id === owner)?.id ?? workspaceId;
+
+  let adopted = false;
+  const scoped = boards.map((board) => {
+    const known = board.workspace_id ?? db.board_workspace[board.id];
+    if (!known) {
+      db.board_workspace[board.id] = home;
+      adopted = true;
+    }
+    return { ...board, workspace_id: known ?? home };
+  });
+
+  if (adopted) {
+    try {
+      writeDb(db);
+    } catch {
+      /* Storage full or blocked. The adoption still held for this render, and
+         the next one redoes it - a read path must not fail over a write it
+         only made to save the next one. */
+    }
+  }
+
+  return scoped.filter((board) => board.workspace_id === workspaceId);
+}
+
 /* ----------------------------------------------------------------- boards -- */
 
 /** GET /boards */
@@ -261,6 +379,10 @@ export async function createBoard(title: string): Promise<Board> {
     id: uid(),
     title: clean,
     owner_id: user.id,
+    // TaskBoard.workspace_id is NOT NULL, so a board always lands in one. The
+    // picker's choice wins; ensureWorkspace() covers the launch where nothing
+    // has been chosen yet.
+    workspace_id: activeWorkspace() ?? ensureWorkspace(db, user.id).id,
     created_at: now(),
   };
   db.boards.push(board);
@@ -288,6 +410,7 @@ export async function deleteBoard(id: ID): Promise<void> {
   );
   db.boards = db.boards.filter((b) => b.id !== id);
   db.tasks = db.tasks.filter((task) => task.board_id !== id);
+  delete db.board_workspace[id];
   db.comments = db.comments.filter((c) => !taskIds.has(c.task_id));
   db.members = db.members.map((m) => ({
     ...m,

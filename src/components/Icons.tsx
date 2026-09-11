@@ -56,6 +56,19 @@ export const ChevronLeft = ({ size = 18 }: IconProps) => (
   </svg>
 );
 
+export const ChevronDown = ({ size = 16 }: IconProps) => (
+  <svg {...base(size)}>
+    <path d="m6 9 6 6 6-6" />
+  </svg>
+);
+
+export const WorkspaceIcon = ({ size = 18 }: IconProps) => (
+  <svg {...base(size)}>
+    <rect x="3" y="7" width="18" height="13" rx="2.5" />
+    <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+  </svg>
+);
+
 export const CheckIcon = ({ size = 14 }: IconProps) => (
   <svg {...base(size)} strokeWidth={2.4}>
     <path d="m5 12 5 5L19 7" />

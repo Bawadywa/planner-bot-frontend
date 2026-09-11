@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import * as api from "../api";
 import { ChevronLeft, ChevronRight } from "../components/Icons";
+import { WorkspacePicker } from "../components/WorkspacePicker";
 import { haptic } from "../telegram";
+import { useActiveWorkspace } from "../lib/workspace";
 import { heaviestTone, priorityOf } from "../lib/priority";
 import {
   formatDue,
@@ -23,6 +25,10 @@ interface CalendarProps {
  *  open work gets a dot; a day with something overdue gets a red one. */
 export function Calendar({ onOpenTask }: CalendarProps) {
   const t = useT();
+  /* The month grid is every board's deadlines, so it narrows with the picker
+     the same way the board list does. Only a dependency - the scoping itself
+     happens in api.listAllTasks(), which walks the scoped board list. */
+  const workspace = useActiveWorkspace();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [boards, setBoards] = useState<Board[]>([]);
   const [selected, setSelected] = useState(todayKey());
@@ -48,7 +54,7 @@ export function Calendar({ onOpenTask }: CalendarProps) {
         console.warn("[planner] calendar could not load", err);
       }
     })();
-  }, []);
+  }, [workspace]);
 
   const boardTitle = useMemo(
     () => new Map(boards.map((b) => [b.id, b.title])),
@@ -90,10 +96,11 @@ export function Calendar({ onOpenTask }: CalendarProps) {
 
   return (
     <>
-      <header className="topbar">
-        <h1>{t("calendar.title")}</h1>
+      <header className="topbar with-picker">
+        <h1 className="sr-only">{t("calendar.title")}</h1>
+        <WorkspacePicker />
         <button
-          className="btn btn-ghost"
+          className="btn btn-ghost topbar-action"
           onClick={() => {
             const now = new Date();
             setCursor({ year: now.getFullYear(), month: now.getMonth() });

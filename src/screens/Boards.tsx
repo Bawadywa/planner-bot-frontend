@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import * as api from "../api";
 import { Sheet } from "../components/Sheet";
+import { WorkspacePicker } from "../components/WorkspacePicker";
 import { ChevronRight, PlusIcon } from "../components/Icons";
 import { haptic, hapticError } from "../telegram";
+import { useActiveWorkspace } from "../lib/workspace";
 import { useT } from "../i18n";
 import type { Board, ID, Task } from "../types";
 
@@ -14,6 +16,10 @@ const showTasks = api.isAvailable("tasks");
 
 export function Boards({ onOpenBoard }: BoardsProps) {
   const t = useT();
+  /* Not read here - api.listBoards() scopes itself to the same store. It is in
+     the dependency list below so that switching workspaces reloads the screen,
+     which is the whole visible effect of the picker in the bar above. */
+  const workspace = useActiveWorkspace();
   const [boards, setBoards] = useState<Board[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,20 +37,32 @@ export function Boards({ onOpenBoard }: BoardsProps) {
       ]);
       setBoards(boardRows);
       setTasks(taskRows);
-      // A failed sign-in does not fail this read - GET /taskboards just answers
-      // with an empty list - so it has to be reported here or the first symptom
-      // is a "User not found" 404 on whatever someone tries to create.
+      // Reported here rather than left to the first write: without it the
+      // first symptom of a launch that never registered is a "User not found"
+      // 404 on whatever someone tries to create, two taps away from the cause.
       const signIn = api.lastSignInError();
       setError(signIn ? t("boards.notRegistered", { reason: signIn }) : "");
     } catch (err) {
-      // Reading boards is a network call in api mode. Without this the screen
-      // never leaves its loading state and shows nothing at all - a blank page
-      // where "could not reach the server" belongs.
-      setError(err instanceof Error ? err.message : t("boards.loadFailed"));
+      /* Reading boards is a network call in api mode. Without this the screen
+         never leaves its loading state and shows nothing at all - a blank page
+         where "could not reach the server" belongs.
+
+         A sign-in failure wins over whatever this read threw. GET /task_boards
+         calls resolve_user() like every other route, so an unregistered launch
+         fails it with "User not found" - which names the symptom, while the
+         sign-in error names the cause. */
+      const signIn = api.lastSignInError();
+      setError(
+        signIn
+          ? t("boards.notRegistered", { reason: signIn })
+          : err instanceof Error
+            ? err.message
+            : t("boards.loadFailed"),
+      );
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [t, workspace]);
 
   useEffect(() => {
     void load();
@@ -55,10 +73,14 @@ export function Boards({ onOpenBoard }: BoardsProps) {
 
   return (
     <>
-      <header className="topbar">
-        <h1>{t("boards.title")}</h1>
+      <header className="topbar with-picker">
+        {/* The picker names the context now, so the visible "Boards" heading
+            would only repeat the tab label in the nav below. Kept for screen
+            readers, which still need the screen announced. */}
+        <h1 className="sr-only">{t("boards.title")}</h1>
+        <WorkspacePicker />
         <button
-          className="icon-btn"
+          className="icon-btn topbar-action"
           aria-label={t("boards.new")}
           onClick={() => setCreating(true)}
         >

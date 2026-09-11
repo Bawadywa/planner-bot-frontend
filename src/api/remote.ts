@@ -9,10 +9,14 @@
    Endpoints this file uses, exactly as main.py declares them:
 
      POST   /user        -> the User row for the verified Telegram id
-     GET    /taskboards  -> list[TaskBoardRead], filtered by ?user_id
-     POST   /taskboard   -> the TaskBoard row, from {title}
-     DELETE /taskboard   -> {id} in the body
-     GET    /tasks       -> list[TaskRead], filtered by ?board_id
+     GET    /workspaces  -> the Workspace rows this identity is a member of
+     POST   /workspace   -> the Workspace row, from {title}
+     PUT    /workspace   -> the updated Workspace row
+     DELETE /workspace   -> {id} in the body
+     GET    /task_boards -> list[TaskBoardRead], filtered by ?workspace_id
+     POST   /task_board  -> the TaskBoard row, from {workspace_id, title}
+     DELETE /task_board  -> {id} in the body
+     GET    /tasks       -> list[TaskRead], filtered by ?task_board_id
      GET    /task        -> one TaskRead, by ?id
      POST   /task        -> the created TaskRead
      PUT    /task        -> the updated TaskRead, every field replaced
@@ -23,13 +27,20 @@
      DELETE /comment     -> {id} in the body
      GET    /health      -> 200, empty body
 
-   The comment routes are live. What is NOT finished is CommentRead, which
-   declares `content` and `image` and nothing else - so a comment comes back
-   with no id, no user_id and no created_at, none of which the client can
-   invent. The mappers below read all three when they are there and say
-   plainly when they are not, rather than dropping rows into an empty thread.
+   Workspaces are served now. Membership is a real table - workspacemembers,
+   keyed (workspace_id, user_id) - so GET /workspaces answers with the
+   workspaces this identity was ADDED to rather than the ones it owns, and
+   GET /task_boards takes the workspace as a REQUIRED query parameter and 404s
+   when the caller is not a member of it. That is why listBoards() and
+   createBoard() below take a workspace id where their local.ts twins take
+   none: the server will not answer without one.
 
-   The workspace list and invites have no routes at all and stay on the local
+   CommentRead now carries id, user_id and created_at, so a thread maps
+   cleanly. The shape guard in listComments() stays as a tripwire rather than a
+   live workaround - it is what turns the next schema change into a named error
+   instead of an empty thread.
+
+   The member list and invites have no routes at all and stay on the local
    store.
    `missing()` below is what a UI action with a local twin but no server route
    raises instead - it must not silently succeed against a copy the server will
@@ -52,7 +63,7 @@ import {
 } from "../lib/http";
 import { toPriorityCode } from "../lib/priority";
 import { boardOrder } from "../lib/taskOrder";
-import type { Board, Comment, CommentAuthor, ID, Task } from "../types";
+import type { Board, Comment, CommentAuthor, ID, Task, Workspace } from "../types";
 import type { CommentView, Identity, TaskInput } from "./local";
 
 /** Raised for a UI action the backend has no route for. 501 rather than 404:
@@ -76,11 +87,14 @@ function numericId(id: ID): number {
 
 /* --------------------------------------------------------------- identity -- */
 
-/* The id the server confirmed for this launch. GET /taskboards takes it as a
-   query parameter, so it has to survive between calls; signIn() runs before the
-   first screen renders (see App.tsx), so by the time anything reads this it is
-   set. tgUser is the fallback for the same value, not a second source of
-   truth - the server derives it from the signed initData either way. */
+/* The id the server confirmed for this launch. No route takes it as a query
+   parameter any more - every one of them reads it out of the signed initData -
+   but the mappers below still need it: it is the owner a row falls back to
+   when the schema does not carry one, and what decides whether a comment is
+   yours. signIn() runs before the first screen renders (see App.tsx), so by
+   the time anything reads this it is set. tgUser is the fallback for the same
+   value, not a second source of truth - the server derives it from initData
+   either way. */
 let confirmedId: ID | null = null;
 
 function currentUserId(): ID {
@@ -116,31 +130,120 @@ export async function signIn(): Promise<Identity> {
   };
 }
 
+/* ------------------------------------------------------------- workspaces -- */
+
+/** WorkspaceRead declares `id` and `title` only, so the owner falls back to the
+ *  identity that asked and the timestamp to the epoch, where asIso() puts
+ *  anything it cannot read.
+ *
+ *  `owner_id` is read first anyway, because POST /workspace has no
+ *  response_model and answers with the whole row. The fallback is no longer
+ *  harmless the way it was: owning a workspace and being a member of one are
+ *  now different things, so a workspace someone else shared comes back with
+ *  THEIR owner_id, and guessing the caller would name the wrong person. */
+function toWorkspace(raw: Raw, ownerId: ID): Workspace | null {
+  const id = asId(raw.id);
+  if (!id) return null;
+  return {
+    id,
+    title: asString(raw.title, "Untitled"),
+    owner_id: asId(raw.owner_id) ?? ownerId,
+    created_at: asIso(raw.created_at),
+  };
+}
+
+/** GET /workspaces - every workspace this identity is a member of.
+ *
+ *  No query parameter any more: the route reads the id out of the signed
+ *  initData and filters on workspacemembers itself. */
+export async function listWorkspaces(): Promise<Workspace[]> {
+  const owner = currentUserId();
+  const rows = await get<unknown>("/workspaces");
+
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => toWorkspace(asRaw(row), owner))
+    .filter((workspace): workspace is Workspace => workspace !== null)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+}
+
+/** POST /workspace */
+export async function createWorkspace(title: string): Promise<Workspace> {
+  const owner = currentUserId();
+  const clean = title.trim();
+  if (!clean) throw new ApiError(422, t("api.titleRequired"));
+
+  const raw = asRaw(await post<unknown>("/workspace", { title: clean.slice(0, 50) }));
+  const workspace = toWorkspace(raw, owner);
+  if (!workspace) throw new ApiError(502, t("api.noWorkspaceId"));
+  return workspace;
+}
+
+/** PUT /workspace
+ *
+ *  The id goes in the body next to the title, which is what the handler reads.
+ *  Note that WorkspaceUpdate does not declare the field, so a backend that
+ *  validates the body strictly will drop it before the handler ever sees it. */
+export async function renameWorkspace(id: ID, title: string): Promise<Workspace> {
+  const owner = currentUserId();
+  const clean = title.trim();
+  if (!clean) throw new ApiError(422, t("api.titleRequired"));
+
+  const body = { id: numericId(id), title: clean.slice(0, 50) };
+  const workspace = toWorkspace(asRaw(await request<unknown>("PUT", "/workspace", { body })), owner);
+  if (!workspace) throw new ApiError(502, t("api.noWorkspaceId"));
+  return workspace;
+}
+
+/** DELETE /workspace - the id travels in the body, as the route declares.
+ *
+ *  The boards go with it: TaskBoard.workspace_id is part of the `task_boards`
+ *  relationship, declared cascade="all, delete-orphan". */
+export async function deleteWorkspace(id: ID): Promise<void> {
+  await request<unknown>("DELETE", "/workspace", { body: { id: numericId(id) } });
+}
+
 /* ----------------------------------------------------------------- boards -- */
 
 /** TaskBoardRead has no owner_id and no created_at, so both are filled in from
- *  what the caller already knows. POST /taskboard has no response_model and so
+ *  what the caller already knows. POST /task_board has no response_model and so
  *  answers with the whole row, which does carry them - hence reading both
- *  shapes here rather than two mappers. */
+ *  shapes here rather than two mappers.
+ *
+ *  `user_id` is kept as a second name for the owner: the column was renamed to
+ *  owner_id when workspaces became many-to-many, and a backend on the old side
+ *  of that rename would otherwise hand back a board attributed to nobody. */
 function toBoard(raw: Raw, ownerId: ID): Board | null {
   const id = asId(raw.id);
   if (!id) return null;
   return {
     id,
     title: asString(raw.title, "Untitled"),
-    owner_id: asId(raw.user_id) ?? ownerId,
+    owner_id: asId(raw.owner_id) ?? asId(raw.user_id) ?? ownerId,
+    /* TaskBoardRead declares this now, so every server row knows its own
+       workspace and the local assignment map is dead in api mode. */
+    workspace_id: asId(raw.workspace_id),
     created_at: asIso(raw.created_at),
   };
 }
 
-/** GET /taskboards?user_id=
+/** GET /task_boards?workspace_id=
+ *
+ *  The workspace is required by the route rather than optional scoping the
+ *  client could skip, and the handler 404s when the caller has no membership
+ *  row for it. api/index.ts is what resolves which workspace that is.
+ *
+ *  What comes back is filtered twice server-side: by the workspace, and by
+ *  taskboardmembers. Being in a workspace is NOT on its own enough to see
+ *  every board in it.
  *
  *  Archived boards are dropped: the column exists server-side and the UI has no
  *  archive view, so showing them would put a board on the list with no way to
  *  tell it apart from a live one. */
-export async function listBoards(): Promise<Board[]> {
+export async function listBoards(workspaceId: ID): Promise<Board[]> {
   const owner = currentUserId();
-  const rows = await get<unknown>("/taskboards", { user_id: owner });
+  const rows = await get<unknown>("/task_boards", {
+    workspace_id: numericId(workspaceId),
+  });
 
   return (Array.isArray(rows) ? rows : [])
     .map((row) => {
@@ -151,68 +254,86 @@ export async function listBoards(): Promise<Board[]> {
     .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
 }
 
-/** POST /taskboard
+/** POST /task_board
+ *
+ *  TaskBoardCreate.workspace_id is declared without a default, which in
+ *  Pydantic v2 means REQUIRED - and the handler checks the caller is a member
+ *  of that workspace before inserting, so it is not something the server can
+ *  be left to guess.
  *
  *  The title cap is the UI's 30, not the column's String(50): a board title is
  *  a row label here and a longer one only truncates on screen. */
-export async function createBoard(title: string): Promise<Board> {
+export async function createBoard(title: string, workspaceId: ID): Promise<Board> {
   const owner = currentUserId();
   const clean = title.trim();
   if (!clean) throw new ApiError(422, t("api.titleRequired"));
   if (clean.length > 30) throw new ApiError(422, t("api.titleTooLong"));
 
-  const board = toBoard(asRaw(await post<unknown>("/taskboard", { title: clean })), owner);
+  const body = { title: clean, workspace_id: numericId(workspaceId) };
+  const board = toBoard(asRaw(await post<unknown>("/task_board", body)), owner);
   if (!board) throw new ApiError(502, t("api.noBoardId"));
   return board;
 }
 
-/** GET /taskboards/{id}
+/** GET /task_boards/{id}
  *
  *  No such route, but the board is already in the list the app can fetch, so
- *  this reads it from there rather than refusing. One extra round trip on the
- *  board screen; it collapses into a real fetch the moment the route lands. */
-export async function getBoard(id: ID): Promise<Board> {
-  const board = (await listBoards()).find((b) => b.id === id);
+ *  this reads it from there rather than refusing - hence the workspace
+ *  argument, which the list route will not answer without. One extra round
+ *  trip on the board screen; it collapses into a real fetch the moment the
+ *  route lands. */
+export async function getBoard(id: ID, workspaceId: ID): Promise<Board> {
+  const board = (await listBoards(workspaceId)).find((b) => b.id === id);
   if (!board) throw new ApiError(404, t("api.boardNotFound"));
   return board;
 }
 
-/** PATCH /taskboard - no route. */
+/** PATCH /task_board - no route. */
 export async function renameBoard(_id: ID, _title: string): Promise<Board> {
-  return missing("PATCH /taskboard");
+  return missing("PATCH /task_board");
 }
 
-/** DELETE /taskboard
+/** DELETE /task_board
  *
  *  The id travels in a JSON body rather than the path, which is what the route
  *  declares. fetch() does send a body on DELETE - unlike GET, where it drops
  *  it - so this works from a browser, though some proxies are known to strip
  *  DELETE bodies and a path parameter would be the safer shape.
  *
- *  The tasks go with it in the database: Task.board_id is ON DELETE CASCADE.
- *  The answer is ignored - there is nothing left to show. */
+ *  Only the board's OWNER can delete it - the route matches on owner_id, not on
+ *  membership - and it answers 200 either way, so an invited member's delete is
+ *  indistinguishable from a real one until the list reloads unchanged.
+ *
+ *  The tasks go with it in the database: Task.task_board_id is ON DELETE
+ *  CASCADE. The answer is ignored - there is nothing left to show. */
 export async function deleteBoard(id: ID): Promise<void> {
-  await request<unknown>("DELETE", "/taskboard", { body: { id: numericId(id) } });
+  await request<unknown>("DELETE", "/task_board", { body: { id: numericId(id) } });
 }
 
 /* ------------------------------------------------------------------ tasks -- */
 
-/** TaskRead nests the whole board rather than carrying a board_id, so the
- *  parent is read back out of it. It also has no created_at column, so that
- *  falls to the epoch - harmless, because listTasks() orders by deadline and
- *  priority and only uses created_at to break a remaining tie, and the server
- *  already returns rows in creation order.
+/** TaskRead has no created_at column, so that falls to the epoch - harmless,
+ *  because listTasks() orders by deadline and priority and only uses created_at
+ *  to break a remaining tie, and the server already returns rows in creation
+ *  order.
  *
  *  `done` IS read here, so the client is ready the moment the routes carry it.
  *  Whether the checkbox is shown is a separate question - see the `taskDone`
  *  entry in api/index.ts. */
 function toTask(raw: Raw): Task | null {
   const id = asId(raw.id);
-  /* TaskRead has carried the parent both ways: a nested `board` object first,
-     a flat `board_id` now. Both are read, because a task whose board cannot be
-     identified is dropped below - and when that happened silently, every task
-     vanished from its board while creating one still appeared to work. */
-  const boardId = asId(raw.board_id) ?? asId(asRaw(raw.board).id);
+  /* TaskRead has named the parent three ways now: a nested `board` object
+     first, then a flat `board_id`, and `task_board_id` since the column was
+     renamed in models.py. All of them are read, because a task whose board
+     cannot be identified is dropped below - and when that happened silently,
+     every task vanished from its board while creating one still appeared to
+     work. The current name is tried first; the rest are there so a stale
+     backend does not empty every list. */
+  const boardId =
+    asId(raw.task_board_id) ??
+    asId(raw.board_id) ??
+    asId(asRaw(raw.task_board).id) ??
+    asId(asRaw(raw.board).id);
 
   if (!id || !boardId) {
     // Never silent. A row the mapper cannot read is a contract change, and the
@@ -252,12 +373,16 @@ function taskBody(input: TaskInput): Raw {
   };
 }
 
-/** GET /tasks?board_id=
+/** GET /tasks?task_board_id=
+ *
+ *  Board-scoped, not author-scoped: the route checks the caller is a member of
+ *  the board and then returns every task on it, so a shared board finally shows
+ *  everyone's work instead of only your own rows.
  *
  *  Re-sorted rather than taken as it comes: the route orders by created_at,
  *  and the board screen wants open work first, then by deadline. */
 export async function listTasks(boardId: ID): Promise<Task[]> {
-  const rows = await get<unknown>("/tasks", { board_id: numericId(boardId) });
+  const rows = await get<unknown>("/tasks", { task_board_id: numericId(boardId) });
   return (Array.isArray(rows) ? rows : [])
     .map((row) => toTask(asRaw(row)))
     .filter((task): task is Task => task !== null)
@@ -276,7 +401,11 @@ export async function createTask(boardId: ID, input: TaskInput): Promise<Task> {
   const title = input.title.trim();
   if (!title) throw new ApiError(422, t("api.titleRequired"));
 
-  const body = { ...taskBody(input), board_id: numericId(boardId) };
+  /* TaskCreate.task_board_id, renamed from board_id along with the column.
+     Only the current name is sent: the field is declared without a default,
+     which in Pydantic v2 means REQUIRED, so a backend on either side of the
+     rename rejects the other name outright and there is nothing to hedge. */
+  const body = { ...taskBody(input), task_board_id: numericId(boardId) };
   const task = toTask(asRaw(await post<unknown>("/task", body)));
   if (!task) throw new ApiError(502, t("api.noTaskId"));
   return task;
