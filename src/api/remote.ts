@@ -25,7 +25,7 @@
      POST   /comment     -> the created CommentRead
      PUT    /comment     -> the updated CommentRead, content and image replaced
      DELETE /comment     -> {id} in the body
-     POST   /invite      -> the Invite row, from {data: {...}, task_boards_ids}
+     POST   /invite      -> the Invite row, from one flat InviteCreate body
      POST   /invite/accept -> the Invite row, from {token} plus four ignored fields
      DELETE /invite      -> {id} in the body
      GET    /health      -> 200, empty body
@@ -613,14 +613,11 @@ export async function deleteComment(id: ID): Promise<void> {
         has to mint all three. The token is the one secret in the flow and has
         no business being chosen out here; `role_id` is worse, because nothing
         on this side knows what the roles table contains.
-     2. POST /invite takes `task_boards_ids` as a SECOND body parameter next to
-        `data`, which makes the body {data: {...}, task_boards_ids: [...]}
-        rather than one object.
-     3. InviteAccept declares workspace_id, expires_at, accepted_by and
+     2. InviteAccept declares workspace_id, expires_at, accepted_by and
         accepted_at - all required - though the handler reads only `token`.
         They are sent as filler.
-     4. There is no GET /invites, so Settings cannot list links.
-     5. There is no GET /invite?token=, so the accept screen cannot say what a
+     3. There is no GET /invites, so Settings cannot list links.
+     4. There is no GET /invite?token=, so the accept screen cannot say what a
         link grants before it is redeemed.
    ---------------------------------------------------------------------------- */
 
@@ -695,13 +692,15 @@ function toInvite(raw: Raw, ownerId: ID, boardIds: ID[] = []): Invite | null {
 
 /** POST /invite
  *
- *  BACKEND GAP 2: `task_boards_ids` is declared as a second body parameter
- *  beside `data`, so FastAPI embeds both and the body is an envelope rather
- *  than one object. Folding board_ids into InviteCreate is what flattens it.
+ *  One flat body: InviteCreate declares workspace_id, token, expires_at,
+ *  role_id and task_boards_ids, and every one of them is without a default -
+ *  which in Pydantic v2 means REQUIRED, so all five are sent explicitly.
  *
- *  The workspace is required rather than inferred - InviteCreate.workspace_id
- *  has no default, which in Pydantic v2 means REQUIRED. api/index.ts resolves
- *  which workspace that is, the same way createBoard() does.
+ *  It has to be flat. A second body parameter next to `data` would make FastAPI
+ *  embed both under their parameter names, and the body would need an envelope;
+ *  with the list folded into the model there is a single body parameter, so the
+ *  model IS the body. Sending the envelope against this shape is what produced
+ *  "workspace_id: Field required" for every field at once.
  *
  *  Note what the route does NOT check: that the caller is a member of the
  *  workspace, or of the boards being handed out. Any id that exists will be
@@ -713,12 +712,10 @@ export async function createInvite(boardIds: ID[], workspaceId: ID): Promise<Inv
   const expires = new Date(Date.now() + INVITE_TTL_DAYS * 86_400_000);
 
   const body = {
-    data: {
-      workspace_id: numericId(workspaceId),
-      token: mintInviteToken(),
-      expires_at: expires.toISOString(),
-      role_id: INVITE_ROLE_ID,
-    },
+    workspace_id: numericId(workspaceId),
+    token: mintInviteToken(),
+    expires_at: expires.toISOString(),
+    role_id: INVITE_ROLE_ID,
     task_boards_ids: boardIds.map(numericId),
   };
 
@@ -735,7 +732,7 @@ export async function createInvite(boardIds: ID[], workspaceId: ID): Promise<Inv
   return invite;
 }
 
-/** GET /invites?workspace_id= - BACKEND GAP 4, no such route.
+/** GET /invites?workspace_id= - BACKEND GAP 3, no such route.
  *
  *  Empty rather than a throw, and this is the one place that choice is worth
  *  arguing about. missing() would be the house style - it is what renameBoard()
@@ -756,7 +753,7 @@ export async function listInvites(_workspaceId: ID): Promise<Invite[]> {
   return [];
 }
 
-/** GET /invite?token= - BACKEND GAP 5, no such route.
+/** GET /invite?token= - BACKEND GAP 4, no such route.
  *
  *  A placeholder preview rather than null, because null is the accept screen's
  *  word for "that link is dead" and this link may be perfectly good - nothing
@@ -776,7 +773,7 @@ export async function getInvite(token: string): Promise<InvitePreview | null> {
 
 /** POST /invite/accept
  *
- *  BACKEND GAP 3: the handler reads `data.token` and nothing else, but
+ *  BACKEND GAP 2: the handler reads `data.token` and nothing else, but
  *  InviteAccept declares workspace_id, expires_at, accepted_by and accepted_at
  *  with no defaults - REQUIRED, in Pydantic v2 - so the request is rejected at
  *  validation without them. The values below are filler and are IGNORED; the
