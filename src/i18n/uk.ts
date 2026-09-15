@@ -86,6 +86,7 @@ export const uk: Record<Key, Phrase> = {
   "board.confirmDelete":
     "Видалити «{title}» і всі її завдання? Цю дію не можна скасувати.",
   "board.saveFailed": "Не вдалося зберегти.",
+  "board.loadFailed": "Не вдалося оновити дошку.",
   "board.deleteFailed": "Не вдалося видалити дошку.",
   "board.hidden.title": "Поки що лише дошки",
   "board.hidden.body": "Завдання ще не на сервері.",

@@ -55,12 +55,14 @@ const served = {
      column to arrive late will want the same treatment. */
   taskDone: serverBacked,
   /* On. backend/app/main.py serves POST, PUT, DELETE /comment and
-     GET /comments?task_id=, and CommentRead carries id, user_id and created_at
-     now, so a thread maps cleanly.
+     GET /comments?task_id=, and CommentRead carries id, created_at and a
+     nested `user` now, so a thread maps cleanly.
 
-     What it still does not carry is anything about the AUTHOR beyond an id -
-     the User model has no name columns at all - so every comment but your own
-     renders under a generic word. See toComment() in remote.ts. */
+     The author came last and mattered most: `users` stores first_name,
+     last_name, user_name and photo_url, captured from the initData that
+     verify_headers() already verifies on every request, so a thread renders
+     under real names and faces instead of the generic word every comment but
+     your own used to get. See toComment() in remote.ts. */
   comments: serverBacked,
   /* On. The two schema fields this was waiting for have landed: TaskBoardRead
      returns workspace_id and TaskBoardCreate accepts one, so the server can

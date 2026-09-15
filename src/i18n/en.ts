@@ -80,6 +80,7 @@ export const en = {
   "board.confirmDelete":
     "Delete “{title}” and all of its tasks? This cannot be undone.",
   "board.saveFailed": "Could not save that.",
+  "board.loadFailed": "Could not refresh this board.",
   "board.deleteFailed": "Could not delete the board.",
   "board.hidden.title": "Boards only, for now",
   "board.hidden.body": "Tasks are not on the server yet.",

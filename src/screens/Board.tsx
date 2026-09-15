@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import * as api from "../api";
 import { Sheet } from "../components/Sheet";
+import { PullArea } from "../components/PullIndicator";
 import { emptyDraft, TaskFields, type TaskDraft } from "../components/TaskFields";
 import { CheckIcon, ChevronLeft, PlusIcon, TrashIcon } from "../components/Icons";
 import { confirmAction, haptic, hapticError, inTelegram } from "../telegram";
 import { dueState, formatDue } from "../lib/date";
 import { priorityOf } from "../lib/priority";
+import { usePullToRefresh } from "../lib/pullToRefresh";
 import { useT } from "../i18n";
 import type { Board as BoardType, ID, Task } from "../types";
 
@@ -25,23 +27,50 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
-  const load = useCallback(async () => {
-    try {
-      const [boardRow, taskRows] = await Promise.all([
-        api.getBoard(boardId),
-        showTasks ? api.listTasks(boardId) : Promise.resolve([]),
-      ]);
-      setBoard(boardRow);
-      setTasks(taskRows);
-    } catch {
-      // The board was deleted from another screen - there is nothing to show.
-      onBack();
-    }
-  }, [boardId, onBack]);
+  /** Reloads the board and its tasks.
+   *
+   *  `keepOpen` is what separates the two callers. On the way in, a board that
+   *  answers 404 or 401 is one this identity cannot open, and leaving is the
+   *  only sensible move - there is nothing to render. On a pull-to-refresh the
+   *  user is already standing on the screen, so the same answer should show as
+   *  a message rather than yanking them back to the list mid-gesture.
+   *
+   *  It also no longer treats EVERY failure as "gone", which it did before.
+   *  That was already wrong - one timeout on open and you were bounced with no
+   *  explanation - and the pull makes it worse, because people pull exactly
+   *  when the network is being flaky. Only 404 and 401 mean the board is out of
+   *  reach; anything else is a request that failed and can be retried. */
+  const load = useCallback(
+    async ({ keepOpen = false }: { keepOpen?: boolean } = {}) => {
+      try {
+        const [boardRow, taskRows] = await Promise.all([
+          api.getBoard(boardId),
+          showTasks ? api.listTasks(boardId) : Promise.resolve([]),
+        ]);
+        setBoard(boardRow);
+        setTasks(taskRows);
+        setError("");
+      } catch (err) {
+        const unreachable =
+          err instanceof api.ApiError && (err.status === 404 || err.status === 401);
+
+        if (unreachable && !keepOpen) {
+          onBack();
+          return;
+        }
+
+        setError(err instanceof Error ? err.message : t("board.loadFailed"));
+      }
+    },
+    [boardId, onBack, t],
+  );
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  /* Same reload the screen already runs, minus the bail-out. */
+  const pull = usePullToRefresh(() => load({ keepOpen: true }));
 
   async function toggleDone(task: Task) {
     haptic();
@@ -118,91 +147,93 @@ export function Board({ boardId, onBack, onOpenTask }: BoardProps) {
         )}
       </header>
 
-      <div className="screen has-nav">
-        {error && <div className="error">{error}</div>}
+      <div className="screen has-nav" ref={pull.ref}>
+        <PullArea pull={pull}>
+          {error && <div className="error">{error}</div>}
 
-        {!showTasks ? (
-          <div className="empty">
-            <div className="title">{t("board.hidden.title")}</div>
-            <p>{t("board.hidden.body")}</p>
-            <p className="hint" style={{ marginTop: 10 }}>
-              {api.missingFor("tasks")}
-            </p>
-          </div>
-        ) : tasks.length === 0 ? (
-          <div className="empty">
-            <div className="title">{t("board.empty.title")}</div>
-            <p>{t("board.empty.body")}</p>
-            <button className="btn btn-primary" onClick={() => setCreating(true)}>
-              <PlusIcon />
-              {t("board.newTaskAria")}
-            </button>
-          </div>
-        ) : (
-          <div className="list">
-            {tasks.map((task) => {
-              const priority = priorityOf(task.priority_code);
-              return (
-              <div key={task.id} className={`row task${task.done ? " done" : ""}`}>
-                {showDone && (
+          {!showTasks ? (
+            <div className="empty">
+              <div className="title">{t("board.hidden.title")}</div>
+              <p>{t("board.hidden.body")}</p>
+              <p className="hint" style={{ marginTop: 10 }}>
+                {api.missingFor("tasks")}
+              </p>
+            </div>
+          ) : tasks.length === 0 ? (
+            <div className="empty">
+              <div className="title">{t("board.empty.title")}</div>
+              <p>{t("board.empty.body")}</p>
+              <button className="btn btn-primary" onClick={() => setCreating(true)}>
+                <PlusIcon />
+                {t("board.newTaskAria")}
+              </button>
+            </div>
+          ) : (
+            <div className="list">
+              {tasks.map((task) => {
+                const priority = priorityOf(task.priority_code);
+                return (
+                <div key={task.id} className={`row task${task.done ? " done" : ""}`}>
+                  {showDone && (
+                    <button
+                      className="check"
+                      aria-pressed={task.done}
+                      aria-label={task.done ? t("board.markNotDone") : t("board.markDone")}
+                      onClick={() => void toggleDone(task)}
+                    >
+                      {task.done && <CheckIcon />}
+                    </button>
+                  )}
+
                   <button
-                    className="check"
-                    aria-pressed={task.done}
-                    aria-label={task.done ? t("board.markNotDone") : t("board.markDone")}
-                    onClick={() => void toggleDone(task)}
+                    className="row-main"
+                    style={{ background: "none", border: 0, padding: 0, textAlign: "left" }}
+                    onClick={() => {
+                      haptic();
+                      onOpenTask(task.id);
+                    }}
                   >
-                    {task.done && <CheckIcon />}
-                  </button>
-                )}
+                    <div className="row-title">
+                      {task.title}
+                      {/* All three levels are marked, and the colour carries the
+                          ranking - see the .tag.priority rules in styles.css.
+                          Keyed on tone, not the code, so a renumbering on the
+                          backend cannot invert it.
 
-                <button
-                  className="row-main"
-                  style={{ background: "none", border: 0, padding: 0, textAlign: "left" }}
-                  onClick={() => {
-                    haptic();
-                    onOpenTask(task.id);
-                  }}
-                >
-                  <div className="row-title">
-                    {task.title}
-                    {/* All three levels are marked, and the colour carries the
-                        ranking - see the .tag.priority rules in styles.css.
-                        Keyed on tone, not the code, so a renumbering on the
-                        backend cannot invert it.
-
-                        Not on a finished task: its priority is history, and a
-                        red badge on a struck-through row reads as something
-                        still needing attention. */}
-                    {!task.done && (
-                      <span
-                        className={`tag priority ${priority.tone}${
-                          priority.known ? "" : " unknown"
-                        }`}
-                        style={{ marginLeft: 6 }}
-                      >
-                        {priority.label}
-                      </span>
-                    )}
-                  </div>
-                  {(task.description || task.deadline) && (
-                    <div className="row-sub">
-                      {task.deadline && (
-                        <span className={`due ${task.done ? "" : dueState(task.deadline)}`}>
-                          {formatDue(task.deadline)}
+                          Not on a finished task: its priority is history, and a
+                          red badge on a struck-through row reads as something
+                          still needing attention. */}
+                      {!task.done && (
+                        <span
+                          className={`tag priority ${priority.tone}${
+                            priority.known ? "" : " unknown"
+                          }`}
+                          style={{ marginLeft: 6 }}
+                        >
+                          {priority.label}
                         </span>
                       )}
-                      {task.deadline && task.description && " · "}
-                      {task.description}
                     </div>
-                  )}
-                </button>
+                    {(task.description || task.deadline) && (
+                      <div className="row-sub">
+                        {task.deadline && (
+                          <span className={`due ${task.done ? "" : dueState(task.deadline)}`}>
+                            {formatDue(task.deadline)}
+                          </span>
+                        )}
+                        {task.deadline && task.description && " · "}
+                        {task.description}
+                      </div>
+                    )}
+                  </button>
 
-                {task.image && <img className="thumb" src={task.image} alt="" />}
-              </div>
-              );
-            })}
-          </div>
-        )}
+                  {task.image && <img className="thumb" src={task.image} alt="" />}
+                </div>
+                );
+              })}
+            </div>
+          )}
+        </PullArea>
       </div>
 
       {creating && (

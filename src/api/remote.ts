@@ -131,13 +131,19 @@ function currentUserId(): ID {
 /** POST /user
  *
  *  Upsert by the id recovered from initData; nothing is sent in the body,
- *  because verify_headers() trusts only what it verified itself.
+ *  because verify_headers() trusts only what it verified itself - and what it
+ *  verifies includes the whole profile, which is where the stored copy comes
+ *  from.
  *
- *  The row that comes back carries the id and the timestamps and nothing else -
- *  the User model has no name, @username or photo columns - so the profile
- *  fields still come from the Telegram launch payload. Only the id is taken
- *  from the server, and that is the point: it is the one the server will scope
- *  every later query by. */
+ *  The launch payload still WINS over the stored row, which is the opposite of
+ *  the usual rule and is right here: initData describes this viewer as Telegram
+ *  knows them right now, while the row is whatever was written the last time
+ *  they signed in - a rename or a new picture shows up in the payload first.
+ *  The row is the fallback, and it is a real one: a launch outside Telegram has
+ *  no payload at all, and used to render the account as the generic word.
+ *
+ *  Only the id is taken from the server unconditionally, and that is the point:
+ *  it is the one the server will scope every later query by. */
 export async function signIn(): Promise<Identity> {
   const row = asRaw(await post<unknown>("/user"));
 
@@ -145,12 +151,22 @@ export async function signIn(): Promise<Identity> {
   if (!id) throw new ApiError(502, t("api.noUserId"));
   confirmedId = id;
 
+  /* `user_name` is the column; `username` is what UserRead calls it. Both are
+     read so this survives whichever name the response actually carries - the
+     same hedge toComment() below makes, and for the same reason. */
+  const storedUsername =
+    typeof row.username === "string"
+      ? row.username
+      : typeof row.user_name === "string"
+        ? row.user_name
+        : null;
+
   return {
     id,
-    first_name: tgUser?.first_name ?? t("user.telegram"),
-    last_name: tgUser?.last_name ?? null,
-    username: tgUser?.username ?? null,
-    photo_url: tgUser?.photo_url ?? null,
+    first_name: tgUser?.first_name || asString(row.first_name) || t("user.telegram"),
+    last_name: tgUser?.last_name ?? (typeof row.last_name === "string" ? row.last_name : null),
+    username: tgUser?.username ?? storedUsername,
+    photo_url: tgUser?.photo_url ?? (typeof row.photo_url === "string" ? row.photo_url : null),
     created_at: asIso(row.created_at),
   };
 }
@@ -479,6 +495,10 @@ export async function deleteTask(id: ID): Promise<void> {
  *  board_id already gets in toTask(): a shape that has changed once will change
  *  again, and the failure mode of guessing wrong is silent.
  *
+ *  The nested object is the live one now that `users` stores the profile, so
+ *  every comment in a thread can finally render under its author's real name
+ *  and picture rather than under a generic noun.
+ *
  *  The profile is read only if a `first_name` actually came back. Telegram
  *  guarantees that field for every account, so its absence means the server has
  *  no profile to give - not that this particular person lacks a name - and the
@@ -510,7 +530,14 @@ function toComment(raw: Raw, taskId: ID): CommentView | null {
           id: authorId,
           first_name: first,
           last_name: typeof user.last_name === "string" ? user.last_name : null,
-          username: typeof user.username === "string" ? user.username : null,
+          /* The column is `user_name`, UserRead declares `username`. Reading
+             both means a thread keeps its @handles whichever way that lands. */
+          username:
+            typeof user.username === "string"
+              ? user.username
+              : typeof user.user_name === "string"
+                ? user.user_name
+                : null,
           photo_url: typeof user.photo_url === "string" ? user.photo_url : null,
         }
       : null;
