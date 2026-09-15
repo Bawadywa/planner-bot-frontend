@@ -34,11 +34,19 @@ export const uk: Record<Key, Phrase> = {
   "workspaces.shared": "Вам надали доступ",
   "workspaces.settingsSub":
     "Перемикатися між ними можна через назву угорі вкладки «Дошки».",
+  "workspaces.rename": "Перейменувати {name}",
+  "workspaces.delete": "Видалити {name}",
+  "workspaces.confirmDelete":
+    "Видалити «{name}» і все, що в ньому? Дошки, їхні завдання та всі коментарі зникнуть разом із ним. Це необоротно.",
+  "workspaces.deleteFailed": "Не вдалося видалити робочий простір.",
   "workspaces.sheet.title": "Новий робочий простір",
   "workspaces.sheet.field": "Назва",
   "workspaces.sheet.placeholder": "Команда дизайну",
   "workspaces.sheet.submit": "Створити",
   "workspaces.sheet.failed": "Не вдалося створити робочий простір.",
+  "workspaces.sheet.renameTitle": "Перейменувати простір",
+  "workspaces.sheet.renameSubmit": "Зберегти назву",
+  "workspaces.sheet.renameFailed": "Не вдалося перейменувати робочий простір.",
 
   /* --------------------------------------------------------------- boards -- */
   "boards.title": "Дошки",
@@ -169,7 +177,7 @@ export const uk: Record<Key, Phrase> = {
   "settings.localTag": "локально",
   "settings.storedHere": "Зберігається в цьому браузері",
   "settings.storedHereApi":
-    "Список робочого простору та запрошення — ще не на сервері.",
+    "Залишки від роботи в локальному режимі та вибір мови. Усе, що зараз показує застосунок, надходить із сервера.",
   "settings.storedHereLocal":
     "Поки нічого не надсилається на сервер — запрошення лише локальні.",
   "settings.erase": "Стерти локальні дані",
@@ -192,8 +200,13 @@ export const uk: Record<Key, Phrase> = {
     "Це посилання несе токен {token}, і Telegram коректно передав його застосунку — уся передача працює.",
   "invite.unknownWhy":
     "Його не можна активувати тут, бо запрошення досі зберігаються в браузері, який їх створив. Щойно на сервері з’явиться таблиця /invites, саме тут відбуватиметься приєднання до дошки.",
+  "invite.unknownServed":
+    "Це посилання більше не дійсне. Можливо, його вже використали, відкликав той, хто надіслав, або воно просто сплило — попросіть нове.",
+  "invite.workspace": "Робочий простір",
   "invite.boards": "Дошки, які відкриває це посилання",
   "invite.boardsDeleted": "Ці дошки вже видалено.",
+  "invite.noPreview":
+    "Сервер поки не може це сказати — у backend/app/main.py немає маршруту GET /invite, тож дошки, які відкриває це посилання, стануть відомі лише після приєднання.",
   "invite.alreadyUsed": "Це посилання вже використано.",
   "invite.join": "Приєднатися",
   "invite.joined": "Ви в команді",
@@ -258,6 +271,8 @@ export const uk: Record<Key, Phrase> = {
   "api.pickBoard": "Виберіть хоча б одну дошку",
   "api.inviteInvalid": "Це посилання-запрошення більше не дійсне",
   "api.inviteUsed": "Це запрошення вже використано",
+  "api.inviteShape":
+    "Сервер повернув запрошення без токена, тому посилання неможливо скласти. Перевірте, чи оголошено `token` у InviteRead в backend/app/schemas.py — response_model пропускає лише ті поля, які в ньому оголошені.",
   "api.outOfStorage":
     "Локальне сховище заповнене. Видаліть кілька зображень або очистіть дані застосунку в Налаштуваннях.",
   "api.localRow":
@@ -265,6 +280,9 @@ export const uk: Record<Key, Phrase> = {
   "api.noRoute": "На сервері ще немає маршруту {route}.",
   "api.noUserId": "Сервер повернув користувача без id.",
   "api.noBoardId": "Сервер повернув дошку без id.",
+  "api.workspaceNotFound": "Робочий простір не знайдено",
+  "api.lastWorkspace":
+    "Це ваш єдиний робочий простір. Дошки мають десь існувати, тож спочатку створіть інший.",
   "api.noWorkspaceId": "Сервер повернув робочий простір без id.",
   "api.noTaskId": "Сервер повернув завдання без id.",
   "api.commentShape":
@@ -277,8 +295,6 @@ export const uk: Record<Key, Phrase> = {
     "Коментарям потрібно, щоб CommentRead у backend/app/schemas.py містив id, user_id і created_at.",
   "missing.workspace":
     "Щоб показати робочий простір, потрібен маршрут, який читає користувачів з однаковим workspace_id — сама модель Workspace вже є.",
-  "missing.invites":
-    "Запрошенням потрібна таблиця з унікальним токеном і маршрути для створення та активації.",
 
   /* -------------------------------------------------------------- credits -- */
   "powered.by": "Працює на",

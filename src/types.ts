@@ -116,9 +116,38 @@ export interface Member {
 export interface Invite {
   id: ID;
   token: string; // "inv_" + 16 url-safe chars
+  /** The workspace accepting puts you in. Null in local mode, which has one
+   *  store and nothing to move between - on the server it is what the picker
+   *  has to switch to after a join, since the boards just granted are in a
+   *  workspace the invitee has never had selected. */
+  workspace_id: ID | null;
   board_ids: ID[];
   created_by: ID;
   created_at: string;
   accepted_by: ID | null;
   accepted_at: string | null;
+}
+
+/** What the accept screen may know about an invite it has not redeemed yet.
+ *
+ *  Titles rather than ids, and no member list, because whoever is looking at
+ *  this is BY DEFINITION not a member yet - a preview route is the one place
+ *  that cannot gate on membership, so it can only hand back the least that
+ *  still makes the screen mean something.
+ *
+ *  It is also why the accept screen cannot resolve board titles itself the way
+ *  it did against the local store: listBoards() returns [] for someone with no
+ *  membership row, so the preview would say they had been invited to nothing. */
+export interface InvitePreview {
+  token: string;
+  /** null in local mode, which has no workspace to name for an invite. */
+  workspace_title: string | null;
+  /** What the link grants.
+   *
+   *  The two empty cases are NOT the same and the screen reads them apart:
+   *  `[]` means the invite grants nothing (its boards were deleted), `null`
+   *  means nothing could look - which is what api mode answers today, since
+   *  backend/app/main.py has no GET /invite route to ask. */
+  board_titles: string[] | null;
+  accepted: boolean;
 }

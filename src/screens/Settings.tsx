@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import * as api from "../api";
 import { Sheet } from "../components/Sheet";
-import { CreateWorkspaceSheet } from "../components/CreateWorkspaceSheet";
+import { WorkspaceSheet } from "../components/WorkspaceSheet";
 import { PoweredBy } from "../components/PoweredBy";
-import { CheckIcon, PlusIcon, SendIcon, TrashIcon } from "../components/Icons";
+import { CheckIcon, PencilIcon, PlusIcon, SendIcon, TrashIcon } from "../components/Icons";
 import {
   botUsername,
   confirmAction,
@@ -40,6 +40,8 @@ export function Settings({ user, onReset }: SettingsProps) {
   const [boards, setBoards] = useState<Board[]>([]);
   const [invites, setInvites] = useState<Invite[]>([]);
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  /** The workspace the rename sheet is open on, or null. */
+  const [renamingWorkspace, setRenamingWorkspace] = useState<Workspace | null>(null);
   const [inviting, setInviting] = useState(false);
   const [error, setError] = useState("");
   // Set when a share could not use Telegram's own sheet, which otherwise looks
@@ -98,6 +100,28 @@ export function Settings({ user, onReset }: SettingsProps) {
         ? `"${boardTitles[0]}"`
         : t("settings.inviteBoards", { count: boardTitles.length });
     return t("settings.inviteText", { what });
+  }
+
+  /** Deletes a workspace, after saying plainly what goes with it.
+   *
+   *  The count in the question is the boards THIS device can see in that
+   *  workspace, which in api mode is the boards you are a member of rather
+   *  than every board in it. It is a floor, not a total, so the wording says
+   *  "and everything in it" rather than resting on the number alone. */
+  async function removeWorkspace(workspace: Workspace) {
+    const ok = await confirmAction(
+      t("workspaces.confirmDelete", { name: workspace.title }),
+    );
+    if (!ok) return;
+
+    try {
+      await api.deleteWorkspace(workspace.id);
+      haptic("medium");
+      await load();
+    } catch (err) {
+      hapticError();
+      setError(err instanceof Error ? err.message : t("workspaces.deleteFailed"));
+    }
   }
 
   async function remove(member: Member) {
@@ -181,29 +205,54 @@ export function Settings({ user, onReset }: SettingsProps) {
             <div className="list">
               {workspaces.map((workspace) => {
                 const chosen = workspace.id === activeWorkspaceId;
+                /* Both routes match on owner_id, so a workspace shared with
+                   you answers 404 to either. Hiding the buttons says that
+                   before the tap rather than after it. */
+                const mine = workspace.owner_id === user.id;
                 return (
-                  <button
-                    key={workspace.id}
-                    className="row"
-                    role="radio"
-                    aria-checked={chosen}
-                    onClick={() => {
-                      haptic();
-                      /* The picker in the Boards bar reads the same store, so
-                         switching here and switching there are one action. */
-                      setActiveWorkspace(workspace.id);
-                    }}
-                  >
-                    <div className="row-main">
+                  <div key={workspace.id} className="row">
+                    <button
+                      className="row-main-btn"
+                      role="radio"
+                      aria-checked={chosen}
+                      onClick={() => {
+                        haptic();
+                        /* The picker in the Boards bar reads the same store,
+                           so switching here and switching there are one
+                           action. */
+                        setActiveWorkspace(workspace.id);
+                      }}
+                    >
                       <div className="row-title">{workspace.title}</div>
                       <div className="row-sub">
-                        {workspace.owner_id === user.id
-                          ? t("workspaces.owned")
-                          : t("workspaces.shared")}
+                        {mine ? t("workspaces.owned") : t("workspaces.shared")}
                       </div>
-                    </div>
+                    </button>
+
                     {chosen && <CheckIcon />}
-                  </button>
+
+                    {mine && (
+                      <>
+                        <button
+                          className="icon-btn"
+                          aria-label={t("workspaces.rename", { name: workspace.title })}
+                          onClick={() => {
+                            haptic();
+                            setRenamingWorkspace(workspace);
+                          }}
+                        >
+                          <PencilIcon />
+                        </button>
+                        <button
+                          className="icon-btn"
+                          aria-label={t("workspaces.delete", { name: workspace.title })}
+                          onClick={() => void removeWorkspace(workspace)}
+                        >
+                          <TrashIcon />
+                        </button>
+                      </>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -400,14 +449,27 @@ export function Settings({ user, onReset }: SettingsProps) {
       </div>
 
       {creatingWorkspace && (
-        <CreateWorkspaceSheet
+        <WorkspaceSheet
           onClose={() => setCreatingWorkspace(false)}
-          onCreated={async (workspace) => {
+          onSaved={async (workspace) => {
             setCreatingWorkspace(false);
             /* Switch to it, the way the picker does: creating one is how you
                say you want to be in it, and leaving the app in the old one
                makes the new row look like it did nothing. */
             setActiveWorkspace(workspace.id);
+            await load();
+          }}
+        />
+      )}
+
+      {renamingWorkspace && (
+        <WorkspaceSheet
+          workspace={renamingWorkspace}
+          onClose={() => setRenamingWorkspace(null)}
+          onSaved={async () => {
+            /* No switch here - renaming the one you are in should not move
+               you, and renaming another should not drag you into it. */
+            setRenamingWorkspace(null);
             await load();
           }}
         />

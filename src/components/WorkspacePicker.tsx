@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api";
-import { CreateWorkspaceSheet } from "./CreateWorkspaceSheet";
+import { WorkspaceSheet } from "./WorkspaceSheet";
 import { CheckIcon, ChevronDown, PlusIcon } from "./Icons";
 import { haptic, pushBack } from "../telegram";
 import { useT } from "../i18n";
@@ -160,9 +160,9 @@ export function WorkspacePicker() {
       )}
 
       {creating && (
-        <CreateWorkspaceSheet
+        <WorkspaceSheet
           onClose={() => setCreating(false)}
-          onCreated={async (workspace) => {
+          onSaved={async (workspace) => {
             setCreating(false);
             // Switch to it first: the point of creating one is to be in it, and
             // the boards behind the sheet should already be its own.

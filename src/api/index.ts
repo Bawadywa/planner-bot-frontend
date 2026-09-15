@@ -19,7 +19,7 @@ import * as remote from "./remote";
 import { ApiError, DEBUG, dataSource, serverConfigured, unusableReason } from "../lib/http";
 import { activeWorkspace, setActiveWorkspace } from "../lib/workspace";
 import { t, type Key } from "../i18n";
-import type { Board, ID, Task, User, Workspace } from "../types";
+import type { Board, ID, Invite, InvitePreview, Task, User, Workspace } from "../types";
 
 export { ApiError } from "../lib/http";
 export type { TaskInput, CommentView } from "./local";
@@ -78,7 +78,24 @@ const served = {
      it needs a route that does not exist at all, rather than two fields on one
      that does. */
   workspace: false,
-  invites: false,
+  /* On, and deliberately on EARLY: backend/app/main.py serves the three write
+     routes - POST /invite, POST /invite/accept, DELETE /invite - over an
+     `invites` table and an `invitetaskboards` join, but neither of the two
+     reads. The flag is flipped anyway so the round trip can be exercised
+     end to end; remote.ts marks every gap it is papering over.
+
+     What the missing reads cost, in the UI: Settings mints a link and shares
+     it, but its Invite links list stays empty, so "share again" and "revoke"
+     never appear. The accept screen cannot say which boards a link opens
+     before it is redeemed - it offers the join and lets the server judge.
+
+     Accepting should write TWO kinds of membership, a workspace row and one
+     row per board, because get_task_boards checks the workspace before it
+     looks at a board at all. That is also why acceptInvite() below moves the
+     picker: the boards just granted sit in a workspace this device has never
+     pointed at, so without the switch a successful join looks like nothing
+     happened. */
+  invites: serverBacked,
 };
 
 export type Feature = keyof typeof served;
@@ -116,7 +133,7 @@ const missing: Record<Feature, Key | null> = {
   comments: "missing.comments",
   workspaces: null,
   workspace: "missing.workspace",
-  invites: "missing.invites",
+  invites: null,
 };
 
 /** Why a feature is hidden, or null when it is not.
@@ -182,21 +199,52 @@ export function launchUser(): User {
 
 /* ------------------------------------------------------------- workspaces -- */
 
-/* The picker's two calls. Listing seeds a first workspace when there is none,
-   so the picker is never empty and createBoard() below always has somewhere to
-   put a board - the same guarantee POST /user gives server-side by creating one
-   at sign-up.
-
-   Renaming and deleting are deliberately absent: remote.ts has both, but
-   deleting a workspace takes its boards and their tasks with it
-   (cascade="all, delete-orphan" on Workspace.task_boards), and that is a
-   confirm-and-explain flow rather than a line on a dropdown. */
+/* Listing seeds a first workspace when there is none, so the picker is never
+   empty and createBoard() below always has somewhere to put a board - the same
+   guarantee POST /user gives server-side by creating one at sign-up. */
 export const listWorkspaces = served.workspaces
   ? remote.listWorkspaces
   : local.listWorkspaces;
 export const createWorkspace = served.workspaces
   ? remote.createWorkspace
   : local.createWorkspace;
+
+/** PUT /workspace.
+ *
+ *  Owner-only, and enforced by the route rather than here: it matches on
+ *  owner_id, so renaming a workspace that was shared with you answers 404. The
+ *  UI hides the button in that case, which is the same rule said earlier. */
+export const renameWorkspace = served.workspaces
+  ? remote.renameWorkspace
+  : local.renameWorkspace;
+
+/** DELETE /workspace, with the two rules the route does not carry itself.
+ *
+ *  Never the last one. TaskBoard.workspace_id is NOT NULL, so an account with
+ *  no workspaces has nowhere to put the next board; the server would happily
+ *  delete it and leave the app in a state whose only exit is creating another.
+ *  Refusing here is cheaper than explaining that afterwards.
+ *
+ *  And the active choice has to move. lib/workspace.ts holds an id, not a row,
+ *  so deleting the one it names leaves every screen scoped to something that no
+ *  longer exists - which reads as "all my boards are gone" rather than as "that
+ *  workspace is gone". The picker repairs the same case on its next list; doing
+ *  it here means the repair has already happened by the time anything renders.
+ *
+ *  What this CANNOT soften is the blast radius: the boards, their tasks and
+ *  every comment on them go too, server-side through
+ *  cascade="all, delete-orphan" on Workspace.task_boards. Callers are expected
+ *  to have confirmed first. */
+export async function deleteWorkspace(id: ID): Promise<void> {
+  const workspaces = await listWorkspaces();
+  if (workspaces.length <= 1) throw new ApiError(422, t("api.lastWorkspace"));
+
+  await (served.workspaces ? remote.deleteWorkspace : local.deleteWorkspace)(id);
+
+  if (activeWorkspace() === id) {
+    setActiveWorkspace(workspaces.find((w) => w.id !== id)?.id ?? null);
+  }
+}
 
 /** The workspace board reads are scoped to, resolving one if nothing has
  *  chosen yet.
@@ -345,17 +393,61 @@ export const removeMember = local.removeMember;
 
 /* ---------------------------------------------------------------- invites -- */
 
-export const createInvite = local.createInvite;
-export const listInvites = local.listInvites;
-export const getInvite = local.getInvite;
-export const acceptInvite = local.acceptInvite;
-export const revokeInvite = local.revokeInvite;
+/** POST /invite, in the workspace the picker is on.
+ *
+ *  The workspace is added here rather than asked of the caller, for the same
+ *  reason createBoard() does it: the share sheet collects boards, and the route
+ *  will not mint a link without the workspace they live in. */
+export async function createInvite(boardIds: ID[]): Promise<Invite> {
+  if (!served.invites) return local.createInvite(boardIds);
+
+  const workspace = await currentWorkspace();
+  if (!workspace) throw new ApiError(422, t("api.noWorkspace"));
+
+  return remote.createInvite(boardIds, workspace);
+}
+
+/** The links you minted in the workspace you are looking at.
+ *
+ *  Always empty in api mode today - there is no GET /invites route to ask, and
+ *  remote.listInvites() says so rather than calling one. The workspace is
+ *  resolved anyway, so the scoping is already right for the moment the route
+ *  lands: switching workspaces in Settings will change the list. */
+export async function listInvites(): Promise<Invite[]> {
+  if (!served.invites) return local.listInvites();
+
+  const workspace = await currentWorkspace();
+  return workspace ? remote.listInvites(workspace) : [];
+}
+
+export const getInvite = served.invites ? remote.getInvite : local.getInvite;
+export const revokeInvite = served.invites ? remote.revokeInvite : local.revokeInvite;
+
+/** POST /invite/accept, then move the picker to what was just joined.
+ *
+ *  The switch is the difference between a join that reads as working and one
+ *  that reads as broken. The server wrote membership rows in the INVITER's
+ *  workspace; the invitee's picker is still on their own, so without this the
+ *  Boards tab after "You're in" shows exactly what it showed before, and the
+ *  boards they were actually given are behind a switcher they have no reason to
+ *  open.
+ *
+ *  Local mode is left alone: its invites grant boards inside the one store this
+ *  browser already has, so there is nothing to switch to. */
+export async function acceptInvite(token: string): Promise<Invite> {
+  if (!served.invites) return local.acceptInvite(token);
+
+  const invite = await remote.acceptInvite(token);
+  if (invite.workspace_id) setActiveWorkspace(invite.workspace_id);
+  return invite;
+}
 
 /* ------------------------------------------------------------------ local -- */
 
-/** Wipes the browser store. Still meaningful in api mode - the workspace list
- *  and invites live there - but it cannot touch anything the backend holds,
- *  which Settings says in as many words. */
+/** Wipes the browser store. It cannot touch anything the backend holds, which
+ *  Settings says in as many words - in api mode the workspaces, boards, tasks,
+ *  comments and invites are all the server's, and what is left in here is the
+ *  language choice plus whatever a run in local mode left behind. */
 export const resetLocalData = local.resetLocalData;
 export const storageUsage = local.storageUsage;
 
@@ -367,4 +459,4 @@ export async function checkHealth(): Promise<boolean> {
   return serverBacked ? remote.checkHealth() : false;
 }
 
-export type { Board, ID, Task, User, Workspace };
+export type { Board, ID, Invite, InvitePreview, Task, User, Workspace };

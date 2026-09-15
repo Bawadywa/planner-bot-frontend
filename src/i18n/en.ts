@@ -38,11 +38,19 @@ export const en = {
   "workspaces.shared": "Shared with you",
   "workspaces.settingsSub":
     "Switch between them from the name at the top of the Boards tab.",
+  "workspaces.rename": "Rename {name}",
+  "workspaces.delete": "Delete {name}",
+  "workspaces.confirmDelete":
+    "Delete “{name}” and everything in it? Its boards, their tasks and all their comments go too. This cannot be undone.",
+  "workspaces.deleteFailed": "Could not delete the workspace.",
   "workspaces.sheet.title": "New workspace",
   "workspaces.sheet.field": "Name",
   "workspaces.sheet.placeholder": "Design team",
   "workspaces.sheet.submit": "Create workspace",
   "workspaces.sheet.failed": "Could not create the workspace.",
+  "workspaces.sheet.renameTitle": "Rename workspace",
+  "workspaces.sheet.renameSubmit": "Save name",
+  "workspaces.sheet.renameFailed": "Could not rename the workspace.",
 
   /* --------------------------------------------------------------- boards -- */
   "boards.title": "Boards",
@@ -157,7 +165,8 @@ export const en = {
   "settings.notRegistered": "Account not registered",
   "settings.localTag": "local",
   "settings.storedHere": "Stored in this browser",
-  "settings.storedHereApi": "The workspace list and invites — not on the server yet.",
+  "settings.storedHereApi":
+    "Rows left over from a run in local mode, plus your language choice. Everything the app shows you now comes from the server.",
   "settings.storedHereLocal":
     "Nothing is sent to a server yet — invites are local only.",
   "settings.erase": "Erase local data",
@@ -180,8 +189,13 @@ export const en = {
     "This link carries the token {token}, and Telegram delivered it to the app correctly — that is the whole handoff working.",
   "invite.unknownWhy":
     "It cannot be redeemed here because invites are still stored in the browser that created them. Once the backend has an /invites table, this is where the board would be joined.",
+  "invite.unknownServed":
+    "This link is no longer valid. It may have been used already, revoked by whoever sent it, or simply expired — ask them for a new one.",
+  "invite.workspace": "Workspace",
   "invite.boards": "Boards this link opens",
   "invite.boardsDeleted": "Those boards have since been deleted.",
+  "invite.noPreview":
+    "The server cannot say yet — backend/app/main.py has no GET /invite route, so the boards this link opens are only known once you join.",
   "invite.alreadyUsed": "This link has already been used.",
   "invite.join": "Join",
   "invite.joined": "You’re in",
@@ -246,6 +260,8 @@ export const en = {
   "api.pickBoard": "Pick at least one board",
   "api.inviteInvalid": "That invite link is no longer valid",
   "api.inviteUsed": "That invite has already been used",
+  "api.inviteShape":
+    "The server returned an invite with no token, so the link cannot be built. Check that InviteRead in backend/app/schemas.py declares `token` — response_model only lets through the fields it declares.",
   "api.outOfStorage":
     "Out of local storage. Remove some task images, or clear the app data in Settings.",
   "api.localRow":
@@ -253,6 +269,9 @@ export const en = {
   "api.noRoute": "The backend has no {route} route yet.",
   "api.noUserId": "The server returned a user with no id.",
   "api.noBoardId": "The server returned a board with no id.",
+  "api.workspaceNotFound": "Workspace not found",
+  "api.lastWorkspace":
+    "This is your only workspace. Boards have to live in one, so create another before deleting this.",
   "api.noWorkspaceId": "The server returned a workspace with no id.",
   "api.noTaskId": "The server returned a task with no id.",
   "api.commentShape":
@@ -264,8 +283,6 @@ export const en = {
     "Comments need CommentRead in backend/app/schemas.py to carry id, user_id and created_at.",
   "missing.workspace":
     "Listing a workspace needs a route that reads the users sharing a workspace_id — the Workspace model itself already exists.",
-  "missing.invites":
-    "Invites need a table with a unique token, and routes to mint and redeem one.",
 
   /* -------------------------------------------------------------- credits -- */
   "powered.by": "Powered by",

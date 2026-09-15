@@ -25,6 +25,9 @@
      POST   /comment     -> the created CommentRead
      PUT    /comment     -> the updated CommentRead, content and image replaced
      DELETE /comment     -> {id} in the body
+     POST   /invite      -> the Invite row, from {data: {...}, task_boards_ids}
+     POST   /invite/accept -> the Invite row, from {token} plus four ignored fields
+     DELETE /invite      -> {id} in the body
      GET    /health      -> 200, empty body
 
    Workspaces are served now. Membership is a real table - workspacemembers,
@@ -40,8 +43,14 @@
    live workaround - it is what turns the next schema change into a named error
    instead of an empty thread.
 
-   The member list and invites have no routes at all and stay on the local
-   store.
+   Invites are half-served: the three write routes above exist, the two reads
+   do not. What that costs is in the invites section below, gap by gap - a
+   token minted client-side because InviteCreate asks for one, a Settings list
+   that stays empty, and an accept screen that cannot say what a link grants
+   before it is redeemed. All five are deletions here once the server side
+   moves.
+
+   The member list still has no route at all and stays on the local store.
    `missing()` below is what a UI action with a local twin but no server route
    raises instead - it must not silently succeed against a copy the server will
    hand back again on the next load.
@@ -63,7 +72,16 @@ import {
 } from "../lib/http";
 import { toPriorityCode } from "../lib/priority";
 import { boardOrder } from "../lib/taskOrder";
-import type { Board, Comment, CommentAuthor, ID, Task, Workspace } from "../types";
+import type {
+  Board,
+  Comment,
+  CommentAuthor,
+  ID,
+  Invite,
+  InvitePreview,
+  Task,
+  Workspace,
+} from "../types";
 import type { CommentView, Identity, TaskInput } from "./local";
 
 /** Raised for a UI action the backend has no route for. 501 rather than 404:
@@ -579,6 +597,221 @@ export async function updateComment(
  *  TaskDetail does anyway. */
 export async function deleteComment(id: ID): Promise<void> {
   await request<unknown>("DELETE", "/comment", { body: { id: numericId(id) } });
+}
+
+/* ---------------------------------------------------------------- invites --
+
+   Written against main.py AS IT STANDS, not against the handover's §4. Three
+   routes exist - POST /invite, POST /invite/accept, DELETE /invite - and the
+   two GETs do not, so this half fills the gaps client-side rather than calling
+   something that would 404. Every workaround below is marked BACKEND GAP and
+   is a deletion, not a rewrite, once the route or the schema changes.
+
+   The gaps, shortest first:
+
+     1. InviteCreate declares `token`, `expires_at` and `role_id`, so the CLIENT
+        has to mint all three. The token is the one secret in the flow and has
+        no business being chosen out here; `role_id` is worse, because nothing
+        on this side knows what the roles table contains.
+     2. POST /invite takes `task_boards_ids` as a SECOND body parameter next to
+        `data`, which makes the body {data: {...}, task_boards_ids: [...]}
+        rather than one object.
+     3. InviteAccept declares workspace_id, expires_at, accepted_by and
+        accepted_at - all required - though the handler reads only `token`.
+        They are sent as filler.
+     4. There is no GET /invites, so Settings cannot list links.
+     5. There is no GET /invite?token=, so the accept screen cannot say what a
+        link grants before it is redeemed.
+   ---------------------------------------------------------------------------- */
+
+/** BACKEND GAP 1. Mirrors inviteToken() in local.ts - url-safe, ~96 bits,
+ *  namespaced with the prefix telegram.ts and bot/tg_bot.py both match on.
+ *
+ *  A token minted by the client is not a secret the server controls: anyone
+ *  who can run this page can choose their own. It is here only because
+ *  InviteCreate declares `token` as a required field. `secrets.token_urlsafe`
+ *  server-side is what retires it. */
+function mintInviteToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  const b64 = btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  return `inv_${b64}`;
+}
+
+/** BACKEND GAP 1. How long a link this app mints stays good for. */
+const INVITE_TTL_DAYS = 7;
+
+/** BACKEND GAP 1. The role an invitee is given.
+ *
+ *  A guess, and it cannot be anything else: InviteCreate requires role_id and
+ *  no route hands the client a role list. 3 is `worker`, which is the third row
+ *  seeded by backend/app/seed.py - so it is right only for a database whose
+ *  roles table was filled by that seed and never edited. A wrong id here is a
+ *  foreign key violation at insert time, which surfaces as a 500 on create.
+ *
+ *  The fix is for the server to pick the role itself and drop the field. */
+const INVITE_ROLE_ID = 3;
+
+/** InviteRead carries no board_ids and POST /invite has no response_model, so
+ *  what actually comes back is the whole ORM row: id, workspace_id, created_by,
+ *  token, expires_at, role_id, accepted_by, accepted_at and the timestamps.
+ *
+ *  `accepted_at` is the field to be careful with: it is null on every live
+ *  invite, and asIso() turns anything it cannot read into the epoch - which
+ *  would put a real timestamp on an unaccepted row and make every link read as
+ *  "used". Hence the explicit string check before mapping it. */
+function toInvite(raw: Raw, ownerId: ID, boardIds: ID[] = []): Invite | null {
+  const id = asId(raw.id);
+  const token = asString(raw.token);
+
+  if (!id || !token) {
+    if (DEBUG) console.warn("[planner] unreadable invite row, dropped", raw);
+    return null;
+  }
+
+  const accepted = typeof raw.accepted_at === "string" && raw.accepted_at !== "";
+
+  return {
+    id,
+    token,
+    workspace_id: asId(raw.workspace_id),
+    /* The row cannot say what it grants - the boards live in invitetaskboards
+       and nothing joins them in - so the caller's own list stands in. That is
+       true for a create, where this side chose them; it is a lie waiting to
+       happen anywhere else, which is why nothing else passes them. */
+    board_ids: Array.isArray(raw.board_ids)
+      ? raw.board_ids
+          .map((value) => asId(value))
+          .filter((boardId): boardId is ID => boardId !== null)
+      : boardIds,
+    created_by: asId(raw.created_by) ?? ownerId,
+    created_at: asIso(raw.created_at),
+    accepted_by: accepted ? asId(raw.accepted_by) : null,
+    accepted_at: accepted ? asIso(raw.accepted_at) : null,
+  };
+}
+
+/** POST /invite
+ *
+ *  BACKEND GAP 2: `task_boards_ids` is declared as a second body parameter
+ *  beside `data`, so FastAPI embeds both and the body is an envelope rather
+ *  than one object. Folding board_ids into InviteCreate is what flattens it.
+ *
+ *  The workspace is required rather than inferred - InviteCreate.workspace_id
+ *  has no default, which in Pydantic v2 means REQUIRED. api/index.ts resolves
+ *  which workspace that is, the same way createBoard() does.
+ *
+ *  Note what the route does NOT check: that the caller is a member of the
+ *  workspace, or of the boards being handed out. Any id that exists will be
+ *  written. Worth having before this is pointed at anything real. */
+export async function createInvite(boardIds: ID[], workspaceId: ID): Promise<Invite> {
+  const owner = currentUserId();
+  if (boardIds.length === 0) throw new ApiError(422, t("api.pickBoard"));
+
+  const expires = new Date(Date.now() + INVITE_TTL_DAYS * 86_400_000);
+
+  const body = {
+    data: {
+      workspace_id: numericId(workspaceId),
+      token: mintInviteToken(),
+      expires_at: expires.toISOString(),
+      role_id: INVITE_ROLE_ID,
+    },
+    task_boards_ids: boardIds.map(numericId),
+  };
+
+  const invite = toInvite(asRaw(await post<unknown>("/invite", body)), owner, boardIds);
+  if (!invite) throw new ApiError(502, t("api.inviteShape"));
+
+  /* The only second chance at this token while GET /invites is missing. The
+     share sheet is the one place the link appears, and if it is dismissed the
+     link is unrecoverable - there is nothing to list it back. Logged rather
+     than surfaced because DEBUG is a developer's switch, and this is only
+     needed while the list route is not there. */
+  if (DEBUG) console.info("[planner] invite minted:", invite.token);
+
+  return invite;
+}
+
+/** GET /invites?workspace_id= - BACKEND GAP 4, no such route.
+ *
+ *  Empty rather than a throw, and this is the one place that choice is worth
+ *  arguing about. missing() would be the house style - it is what renameBoard()
+ *  does - but this call is inside the Promise.all that loads the whole Settings
+ *  screen, so a rejection here takes the workspace list, the board list and the
+ *  member list down with it. An empty Invite links section costs one heading
+ *  that never appears; the alternative costs the screen.
+ *
+ *  What it means while it is empty: a link can only be shared at the moment it
+ *  is minted, because nothing can list it again afterwards. "Share again" and
+ *  "Revoke" have nothing to appear on. */
+export async function listInvites(_workspaceId: ID): Promise<Invite[]> {
+  if (DEBUG) {
+    console.info(
+      "[planner] invite links are not listed: backend/app/main.py has no GET /invites route",
+    );
+  }
+  return [];
+}
+
+/** GET /invite?token= - BACKEND GAP 5, no such route.
+ *
+ *  A placeholder preview rather than null, because null is the accept screen's
+ *  word for "that link is dead" and this link may be perfectly good - nothing
+ *  here can tell. `board_titles: null` is the distinction: [] means the invite
+ *  grants nothing, null means nothing could look.
+ *
+ *  So the screen offers the join and lets the server be the judge, which is
+ *  the honest split while the preview does not exist. */
+export async function getInvite(token: string): Promise<InvitePreview | null> {
+  if (DEBUG) {
+    console.info(
+      "[planner] invite preview unavailable: backend/app/main.py has no GET /invite route",
+    );
+  }
+  return { token, workspace_title: null, board_titles: null, accepted: false };
+}
+
+/** POST /invite/accept
+ *
+ *  BACKEND GAP 3: the handler reads `data.token` and nothing else, but
+ *  InviteAccept declares workspace_id, expires_at, accepted_by and accepted_at
+ *  with no defaults - REQUIRED, in Pydantic v2 - so the request is rejected at
+ *  validation without them. The values below are filler and are IGNORED; the
+ *  workspace in particular is not something this side could know, since the
+ *  whole point is that the caller has never seen that workspace. Deleting the
+ *  four fields from the schema deletes them from here.
+ *
+ *  Two kinds of membership should come out of this: a workspacemembers row and
+ *  one taskboardmembers row per board. Both are needed - get_task_boards checks
+ *  the workspace before it looks at a board at all - which is why the caller
+ *  re-reads the workspace list afterwards and not only the boards. */
+export async function acceptInvite(token: string): Promise<Invite> {
+  const owner = currentUserId();
+
+  const body = {
+    token,
+    workspace_id: 0,
+    expires_at: new Date().toISOString(),
+    accepted_by: null,
+    accepted_at: null,
+  };
+
+  const invite = toInvite(asRaw(await post<unknown>("/invite/accept", body)), owner);
+  if (!invite) throw new ApiError(502, t("api.inviteShape"));
+  return invite;
+}
+
+/** DELETE /invite - the id travels in the body, as the route declares.
+ *
+ *  Matches on created_by, so revoking someone else's link is a silent no-op
+ *  that answers 200 - the same shape every other delete route here has. No UI
+ *  reaches this yet: revoking is offered from the Invite links list, which is
+ *  empty until GET /invites exists. */
+export async function revokeInvite(id: ID): Promise<void> {
+  await request<unknown>("DELETE", "/invite", { body: { id: numericId(id) } });
 }
 
 /* ----------------------------------------------------------------- health -- */

@@ -24,6 +24,7 @@ import type {
   CommentAuthor,
   ID,
   Invite,
+  InvitePreview,
   Member,
   Task,
   User,
@@ -301,6 +302,63 @@ export async function createWorkspace(title: string): Promise<Workspace> {
   db.workspaces.push(workspace);
   writeDb(db);
   return workspace;
+}
+
+/** PUT /workspace - the title is the only mutable column.
+ *
+ *  Owner-scoped, because the route is: it matches on owner_id, so a workspace
+ *  someone shared with you is not yours to rename. */
+export async function renameWorkspace(id: ID, title: string): Promise<Workspace> {
+  const user = requireUser();
+  const clean = title.trim();
+  if (!clean) throw new ApiError(422, t("api.titleRequired"));
+
+  const db = readDb();
+  const workspace = db.workspaces.find((w) => w.id === id && w.owner_id === user.id);
+  if (!workspace) throw new ApiError(404, t("api.workspaceNotFound"));
+
+  workspace.title = clean.slice(0, 50);
+  writeDb(db);
+  return workspace;
+}
+
+/** DELETE /workspace - cascades the way the database does.
+ *
+ *  Workspace.task_boards is cascade="all, delete-orphan" and Task.task_board_id
+ *  is ON DELETE CASCADE, so a workspace takes its boards, their tasks and those
+ *  tasks' comments with it. Mirrored here rather than left to leak, so that
+ *  "delete a workspace" means the same thing in both data sources.
+ *
+ *  No guard against deleting the LAST one here - the route has none either, and
+ *  this file is a stand-in for the route. That rule lives in api/index.ts,
+ *  where it can be applied to both halves at once. */
+export async function deleteWorkspace(id: ID): Promise<void> {
+  const user = requireUser();
+  const db = readDb();
+
+  const workspace = db.workspaces.find((w) => w.id === id && w.owner_id === user.id);
+  if (!workspace) throw new ApiError(404, t("api.workspaceNotFound"));
+
+  const boardIds = new Set(
+    db.boards
+      .filter((b) => (b.workspace_id ?? db.board_workspace[b.id]) === id)
+      .map((b) => b.id),
+  );
+  const taskIds = new Set(
+    db.tasks.filter((task) => boardIds.has(task.board_id)).map((task) => task.id),
+  );
+
+  db.workspaces = db.workspaces.filter((w) => w.id !== id);
+  db.boards = db.boards.filter((b) => !boardIds.has(b.id));
+  db.tasks = db.tasks.filter((task) => !boardIds.has(task.board_id));
+  db.comments = db.comments.filter((c) => !taskIds.has(c.task_id));
+  for (const boardId of boardIds) delete db.board_workspace[boardId];
+  db.members = db.members.map((m) => ({
+    ...m,
+    board_ids: m.board_ids.filter((b) => !boardIds.has(b)),
+  }));
+
+  writeDb(db);
 }
 
 /** Remembers which workspace a board belongs to.
@@ -661,6 +719,7 @@ export async function createInvite(boardIds: ID[]): Promise<Invite> {
   const invite: Invite = {
     id: uid(),
     token: inviteToken(),
+    workspace_id: activeWorkspace(),
     board_ids: boardIds,
     created_by: user.id,
     created_at: now(),
@@ -681,14 +740,31 @@ export async function listInvites(): Promise<Invite[]> {
   });
 }
 
-/** GET /invites/{token}
+/** GET /invite?token=
  *
  *  Null rather than a 404 throw, because "no such token" is a normal outcome
  *  here, not a failure: the store is this browser's localStorage, so a link
  *  opened on the recipient's phone can never resolve. The accept screen says so
- *  in as many words instead of showing an error. */
-export async function getInvite(token: string): Promise<Invite | null> {
-  return readDb().invites.find((i) => i.token === token) ?? null;
+ *  in as many words instead of showing an error.
+ *
+ *  Answers the preview shape rather than the row, matching the route - the
+ *  board TITLES are resolved here, because the invitee cannot look them up for
+ *  themselves. Locally that is a lookup in the same store; on the server it is
+ *  the only way the titles can travel at all. There is no workspace to name:
+ *  local invites grant boards inside whatever this browser already holds. */
+export async function getInvite(token: string): Promise<InvitePreview | null> {
+  const db = readDb();
+  const invite = db.invites.find((i) => i.token === token);
+  if (!invite) return null;
+
+  return {
+    token: invite.token,
+    workspace_title: null,
+    board_titles: invite.board_ids
+      .map((id) => db.boards.find((b) => b.id === id)?.title)
+      .filter((title): title is string => Boolean(title)),
+    accepted: invite.accepted_at !== null,
+  };
 }
 
 /** POST /invites/{token}/accept

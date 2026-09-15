@@ -456,6 +456,24 @@ select {
   min-width: 0;
 }
 
+/* The tappable half of a row that also carries its own buttons - the workspace
+   list in Settings, where the row switches and the icons beside it rename and
+   delete. `.row-main` cannot simply BE the button: a <button> inside a
+   <button> is invalid, so the row is a plain div and this is the part of it
+   that responds. */
+.row-main-btn {
+  flex: 1;
+  min-width: 0;
+  display: block;
+  padding: 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .row-title {
   font-size: 1rem;
   font-weight: 500;
