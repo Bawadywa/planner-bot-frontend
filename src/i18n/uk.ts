@@ -161,8 +161,8 @@ export const uk: Record<Key, Phrase> = {
   "settings.confirmRevoke":
     "Відкликати це посилання? Той, хто вже його має, не зможе приєднатися.",
   "settings.fallbackNote": "Відкрито у вкладці браузера — посилання в списку нижче.",
-  "settings.inviteText": "Приєднуйтеся до {what} у Planner",
-  "settings.inviteTextPlain": "Приєднуйтеся до Planner",
+  "settings.inviteText": "Приєднуйтеся до {what} у Planner ✨",
+  "settings.inviteTextPlain": "Приєднуйтеся до Planner ✨",
   "settings.data": "Дані",
   "settings.backend": "Сервер",
   "settings.backendSub": "Дошки та ваш обліковий запис зберігаються на сервері.",

@@ -155,8 +155,8 @@ export const en = {
   "settings.confirmRevoke":
     "Revoke this link? Anyone who already has it will not be able to join.",
   "settings.fallbackNote": "Opened in a browser tab — the link is listed below.",
-  "settings.inviteText": "Join me in {what} on Planner",
-  "settings.inviteTextPlain": "Join me on Planner",
+  "settings.inviteText": "Join me in {what} on Planner ✨",
+  "settings.inviteTextPlain": "Join me on Planner ✨",
   "settings.data": "Data",
   "settings.backend": "Backend",
   "settings.backendSub": "Boards and your account are stored on the server.",

@@ -109,14 +109,22 @@ export function Settings({ user, onReset, onWorkspaceCreated }: SettingsProps) {
    *
    *  Built at share time rather than held as a constant: the sender's language
    *  is the one the message should be written in, and that can change while
-   *  this screen is open. */
-  function inviteText(): string {
+   *  this screen is open. `link` is the invite link the same share carries, so
+   *  the name can be the thing you tap.
+   *
+   *  The name is written as Markdown - bold, wrapped around a link. Telegram's
+   *  composer is what parses it, and only the desktop client does; on mobile
+   *  the asterisks and brackets are shown as typed. That is why the plain link
+   *  still rides along as the share's `url` (shareToTelegram), which every
+   *  client turns into a tappable preview: the formatting is a bonus, never
+   *  the only way in. */
+  function inviteText(link: string): string {
     const name = workspaces.find((w) => w.id === activeWorkspaceId)?.title;
     /* No name to use - the list has not loaded, or this launch has no
        workspace selected yet. The greeting drops the clause rather than
        shipping an empty pair of quotes. */
     return name
-      ? t("settings.inviteText", { what: `"${name}"` })
+      ? t("settings.inviteText", { what: `**[${name}](${link})**` })
       : t("settings.inviteTextPlain");
   }
 
@@ -159,7 +167,8 @@ export function Settings({ user, onReset, onWorkspaceCreated }: SettingsProps) {
 
   function shareAgain(invite: Invite) {
     haptic();
-    const shared = shareToTelegram(inviteLink(invite.token), inviteText());
+    const link = inviteLink(invite.token);
+    const shared = shareToTelegram(link, inviteText(link));
     setNote(shared ? "" : t("settings.fallbackNote"));
   }
 
@@ -580,7 +589,7 @@ function InviteSheet({
   onInvited,
 }: {
   boards: Board[];
-  inviteText: () => string;
+  inviteText: (link: string) => string;
   onClose: () => void;
   onInvited: (sharedNatively: boolean) => void | Promise<void>;
 }) {
@@ -605,7 +614,8 @@ function InviteSheet({
     setError("");
     try {
       const invite = await api.createInvite(picked, role);
-      const shared = shareToTelegram(inviteLink(invite.token), inviteText());
+      const link = inviteLink(invite.token);
+      const shared = shareToTelegram(link, inviteText(link));
       haptic("medium");
       await onInvited(shared);
     } catch (err) {
