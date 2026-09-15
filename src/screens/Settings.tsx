@@ -27,9 +27,18 @@ interface SettingsProps {
    *  identity from Telegram. There is no sign-out to pair with it: the account
    *  is the Telegram one, and the app cannot revoke it. */
   onReset: () => void;
+  /** Called after a workspace is CREATED here, once it is already the active
+   *  one, so the shell can show it.
+   *
+   *  Settings cannot navigate itself - the tab lives in App.tsx - and switching
+   *  without moving is what made creating a workspace here feel like nothing
+   *  happened: the tick moved in a list three sections down, and the boards it
+   *  actually changed are on another tab. Renaming deliberately does not call
+   *  this; it changes a label, not where you are. */
+  onWorkspaceCreated: () => void;
 }
 
-export function Settings({ user, onReset }: SettingsProps) {
+export function Settings({ user, onReset, onWorkspaceCreated }: SettingsProps) {
   const t = useT();
   /* Subscribed, not just read: creating or switching a workspace has to move
      the tick in the list below without waiting for anything to refetch, and
@@ -457,6 +466,12 @@ export function Settings({ user, onReset }: SettingsProps) {
                say you want to be in it, and leaving the app in the old one
                makes the new row look like it did nothing. */
             setActiveWorkspace(workspace.id);
+            /* Then go and show it. The switch above is invisible from here -
+               an empty workspace has nothing in Settings to look different -
+               so the Boards tab is where "you are in it now" is legible.
+               Before the reload, not after: the list this screen is about to
+               refetch belongs to a screen the user is already leaving. */
+            onWorkspaceCreated();
             await load();
           }}
         />

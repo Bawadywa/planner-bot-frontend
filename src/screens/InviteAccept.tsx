@@ -150,11 +150,15 @@ export function InviteAccept({ token, onDone }: InviteAcceptProps) {
             </div>
             <div className="chips">
               {lookup.preview.board_titles === null ? (
-                /* Nothing could look: there is no preview route yet. Not the
-                   same as an invite that grants nothing, and saying "those
-                   boards have been deleted" here would be a guess dressed as
-                   a fact. */
-                <span className="hint">{t("invite.noPreview")}</span>
+                /* Named boards are not on offer - the server identifies them
+                   by id and this reader has no membership to resolve one. The
+                   count is, so it carries the sentence rather than leaving it
+                   to say nothing. */
+                <span className="hint">
+                  {lookup.preview.board_count === null
+                    ? t("invite.noPreview")
+                    : t("invite.boardCount", { count: lookup.preview.board_count })}
+                </span>
               ) : lookup.preview.board_titles.length === 0 ? (
                 <span className="hint">{t("invite.boardsDeleted")}</span>
               ) : (

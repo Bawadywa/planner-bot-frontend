@@ -84,6 +84,11 @@ export function App() {
       ) : (
         <Settings
           user={user}
+          /* A new workspace is a change of context, so the app follows it to
+             the screen that shows one. switchTab() also clears the pushed
+             stack, which matters: a board pushed from the old workspace would
+             otherwise still be on top of the new one. */
+          onWorkspaceCreated={() => switchTab("boards")}
           onReset={() => {
             setStack([]);
             setTab("boards");

@@ -150,6 +150,13 @@ export interface InvitePreview {
    *  the invite ROW, so the boards arrive as ids, and an invitee has no
    *  membership to resolve an id into a title with. */
   board_titles: string[] | null;
+  /** How many boards the link grants, when only the count is knowable.
+   *
+   *  InviteRead carries task_boards_ids, so the server can say HOW MANY to
+   *  someone who may not know WHICH - a count leaks nothing a title would not,
+   *  and "3 boards" is a far better answer than saying nothing at all. Null
+   *  when even that is unknown. */
+  board_count: number | null;
   accepted: boolean;
   /** When the link stops working, as a UTC ISO string, or null when unknown.
    *

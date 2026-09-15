@@ -780,6 +780,9 @@ export async function listInvites(_workspaceId: ID): Promise<Invite[]> {
  *  instead, which is true and reads differently. A route returning titles is
  *  what fills them in.
  *
+ *  The COUNT does survive, though: task_boards_ids is on InviteRead, and how
+ *  many boards a link opens gives away nothing that naming them would not.
+ *
  *  `accepted_at` and `expires_at` need the explicit string checks below for
  *  the same reason `accepted_at` does in toInvite(): both are null on a live
  *  invite, and asIso() turns anything it cannot read into the epoch - which
@@ -803,10 +806,13 @@ export async function getInvite(token: string): Promise<InvitePreview | null> {
     throw new ApiError(502, t("api.inviteShape"));
   }
 
+  const boardIds = Array.isArray(raw.task_boards_ids) ? raw.task_boards_ids : null;
+
   return {
     token: asString(raw.token, token),
     workspace_title: null,
     board_titles: null,
+    board_count: boardIds?.length ?? null,
     accepted: typeof raw.accepted_at === "string" && raw.accepted_at !== "",
     expires_at:
       typeof raw.expires_at === "string" && raw.expires_at !== ""
@@ -831,6 +837,11 @@ export async function getInvite(token: string): Promise<InvitePreview | null> {
  *  re-reads the workspace list afterwards and not only the boards. */
 export async function acceptInvite(token: string): Promise<Invite> {
   const owner = currentUserId();
+
+  /* The token being spent, because "Invite not found" says nothing about WHICH
+     token the server could not find - and the one thing worth comparing
+     against the invites table is this exact string. */
+  if (DEBUG) console.info("[planner] accepting invite:", token);
 
   const body = {
     token,

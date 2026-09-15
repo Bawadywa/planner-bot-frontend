@@ -194,6 +194,10 @@ export const en = {
   "invite.workspace": "Workspace",
   "invite.boards": "Boards this link opens",
   "invite.boardsDeleted": "Those boards have since been deleted.",
+  "invite.boardCount": {
+    one: "{count} board — its name becomes visible once you join.",
+    other: "{count} boards — their names become visible once you join.",
+  },
   "invite.noPreview":
     "Not shown — the server identifies the boards by number, and their names are only readable once you are a member. Joining is what makes them visible.",
   "invite.alreadyUsed": "This link has already been used.",
