@@ -13,6 +13,7 @@ import {
   shareToTelegram,
 } from "../telegram";
 import { displayName, handle, initials } from "../lib/user";
+import { DEFAULT_INVITE_ROLE, INVITE_ROLES } from "../lib/role";
 import { setActiveWorkspace, useActiveWorkspace } from "../lib/workspace";
 import { LANGUAGES, useLang, useT } from "../i18n";
 import type { Board, ID, Invite, Member, User, Workspace } from "../types";
@@ -100,15 +101,23 @@ export function Settings({ user, onReset, onWorkspaceCreated }: SettingsProps) {
    *  shows it next to the link preview, so it has to make sense on its own -
    *  the recipient sees it before they know what Planner is.
    *
+   *  Names the WORKSPACE, not the boards. The message lands in a chat, where it
+   *  outlives the invite and can be forwarded on: board titles are the inside
+   *  of a workspace, and a list of them tells a stranger more about how a team
+   *  works than an invitation needs to. The workspace is the thing being joined
+   *  and the one name the recipient can act on.
+   *
    *  Built at share time rather than held as a constant: the sender's language
    *  is the one the message should be written in, and that can change while
    *  this screen is open. */
-  function inviteText(boardTitles: string[]): string {
-    const what =
-      boardTitles.length === 1
-        ? `"${boardTitles[0]}"`
-        : t("settings.inviteBoards", { count: boardTitles.length });
-    return t("settings.inviteText", { what });
+  function inviteText(): string {
+    const name = workspaces.find((w) => w.id === activeWorkspaceId)?.title;
+    /* No name to use - the list has not loaded, or this launch has no
+       workspace selected yet. The greeting drops the clause rather than
+       shipping an empty pair of quotes. */
+    return name
+      ? t("settings.inviteText", { what: `"${name}"` })
+      : t("settings.inviteTextPlain");
   }
 
   /** Deletes a workspace, after saying plainly what goes with it.
@@ -150,10 +159,7 @@ export function Settings({ user, onReset, onWorkspaceCreated }: SettingsProps) {
 
   function shareAgain(invite: Invite) {
     haptic();
-    const titles = invite.board_ids
-      .map((id) => boards.find((b) => b.id === id)?.title)
-      .filter((title): title is string => Boolean(title));
-    const shared = shareToTelegram(inviteLink(invite.token), inviteText(titles));
+    const shared = shareToTelegram(inviteLink(invite.token), inviteText());
     setNote(shared ? "" : t("settings.fallbackNote"));
   }
 
@@ -472,7 +478,10 @@ export function Settings({ user, onReset, onWorkspaceCreated }: SettingsProps) {
                Before the reload, not after: the list this screen is about to
                refetch belongs to a screen the user is already leaving. */
             onWorkspaceCreated();
-            await load();
+            /* No reload: this screen is being left. Its lists are refetched on
+               mount, so the next visit is current either way, and four
+               requests for a component that is already unmounting are four
+               responses nothing will render. */
           }}
         />
       )}
@@ -571,12 +580,13 @@ function InviteSheet({
   onInvited,
 }: {
   boards: Board[];
-  inviteText: (boardTitles: string[]) => string;
+  inviteText: () => string;
   onClose: () => void;
   onInvited: (sharedNatively: boolean) => void | Promise<void>;
 }) {
   const t = useT();
   const [picked, setPicked] = useState<ID[]>([]);
+  const [role, setRole] = useState<ID>(DEFAULT_INVITE_ROLE);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -594,9 +604,8 @@ function InviteSheet({
     setBusy(true);
     setError("");
     try {
-      const invite = await api.createInvite(picked);
-      const titles = boards.filter((b) => picked.includes(b.id)).map((b) => b.title);
-      const shared = shareToTelegram(inviteLink(invite.token), inviteText(titles));
+      const invite = await api.createInvite(picked, role);
+      const shared = shareToTelegram(inviteLink(invite.token), inviteText());
       haptic("medium");
       await onInvited(shared);
     } catch (err) {
@@ -632,6 +641,41 @@ function InviteSheet({
                 {board.title}
               </button>
             ))}
+          </div>
+        </div>
+
+        <div className="field">
+          <div className="label">
+            <span>{t("settings.sheet.role")}</span>
+          </div>
+          <div className="chips" role="radiogroup" aria-label={t("settings.sheet.role")}>
+            {INVITE_ROLES.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                role="radio"
+                aria-checked={role === option.id}
+                aria-pressed={role === option.id}
+                className="chip"
+                onClick={() => {
+                  haptic();
+                  setRole(option.id);
+                }}
+              >
+                {t(option.label)}
+              </button>
+            ))}
+          </div>
+          {/* The chosen role's own line, rather than all three at once: the
+              chips are the choice and this says what the choice means. */}
+          <div className="hint" style={{ marginTop: 8 }}>
+            {t(INVITE_ROLES.find((r) => r.id === role)?.hint ?? "roles.workerHint")}
+          </div>
+          {/* Said plainly, because the chips above otherwise promise a
+              permission model that does not exist yet: the role reaches
+              workspacemembers.role_id and no route reads it back. */}
+          <div className="hint" style={{ marginTop: 6 }}>
+            {t("roles.notEnforced")}
           </div>
         </div>
 

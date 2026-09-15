@@ -157,8 +157,8 @@ export const en = {
     "Revoke this link? Anyone who already has it will not be able to join.",
   "settings.fallbackNote":
     "Telegram’s share sheet is only available inside the Telegram app — the link opened in a browser tab instead. It is listed below, ready to copy.",
-  "settings.inviteText": "Join me on {what} in Planner",
-  "settings.inviteBoards": { one: "{count} board", other: "{count} boards" },
+  "settings.inviteText": "Join me in {what} on Planner",
+  "settings.inviteTextPlain": "Join me on Planner",
   "settings.data": "Data",
   "settings.backend": "Backend",
   "settings.backendSub": "Boards and your account are stored on the server.",
@@ -176,11 +176,23 @@ export const en = {
   "settings.sheet.noBotUsername":
     "BOT_USERNAME is not set in config.js — the link will point at t.me/?startapp=… and open nothing.",
   "settings.sheet.boards": "Boards they can open",
+  "settings.sheet.role": "Role",
   "settings.sheet.selected": "{count} selected",
   "settings.sheet.hint":
     "Telegram opens its own share sheet next — search, recent chats and contacts — and sends the link from you. Nothing leaves this device until you pick someone there.",
   "settings.sheet.submit": "Choose a chat in Telegram",
   "settings.sheet.failed": "Could not create the invite.",
+
+  /* ---------------------------------------------------------------- roles -- */
+  "roles.admin": "Admin",
+  "roles.adminHint":
+    "Full control, including deleting the workspace and everything in it. Give this only to someone you would trust with the account.",
+  "roles.manager": "Manager",
+  "roles.managerHint": "Runs the boards they are given — tasks, deadlines and people.",
+  "roles.worker": "Member",
+  "roles.workerHint": "Works on the boards they are given. The safe default for a link sent to a chat.",
+  "roles.notEnforced":
+    "The role is recorded with the membership, but the backend does not check it on any route yet — today every member can do everything.",
 
   /* --------------------------------------------------------------- invite -- */
   "invite.title": "You were invited",

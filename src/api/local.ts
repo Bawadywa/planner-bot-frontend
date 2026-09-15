@@ -710,8 +710,12 @@ function inviteToken(): string {
   return `inv_${b64}`;
 }
 
-/** POST /invites */
-export async function createInvite(boardIds: ID[]): Promise<Invite> {
+/** POST /invites
+ *
+ *  `roleId` is accepted and dropped, so the signature matches remote.ts. The
+ *  mock has no roles table and no route guards to honour one, so storing it
+ *  would only let the UI show a permission that means nothing here. */
+export async function createInvite(boardIds: ID[], _roleId?: ID): Promise<Invite> {
   const user = requireUser();
   if (boardIds.length === 0) throw new ApiError(422, t("api.pickBoard"));
 

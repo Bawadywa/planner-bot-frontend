@@ -248,7 +248,13 @@ select {
   z-index: 40;
   width: max-content;
   min-width: 220px;
-  max-width: min(320px, calc(100vw - 32px));
+  /* 100vw is the whole window and knows nothing about the notch, so on a
+     landscape phone with a large side inset the cap allowed a menu wider than
+     the column it hangs in. The insets come out of the budget explicitly. */
+  max-width: min(
+    320px,
+    calc(100vw - var(--inset-left) - var(--inset-right) - 32px)
+  );
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -345,6 +351,62 @@ select {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: 18px 16px;
+}
+
+/* Keeps a pull at the top of a list from becoming the webview's own bounce,
+   and stops a fast flick chaining into whatever is behind the app. */
+.screen {
+  overscroll-behavior-y: contain;
+}
+
+/* ------------------------------------------------------ pull to refresh -- */
+
+/* The wrapper the pull translates. Positioned so the spinner can sit in the
+   strip just above the first row, which is off-screen until something pulls. */
+.ptr {
+  position: relative;
+  will-change: transform;
+}
+
+.ptr-indicator {
+  position: absolute;
+  top: -42px;
+  left: 0;
+  right: 0;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Never in the way of a tap: it is feedback, not a control. */
+  pointer-events: none;
+}
+
+.ptr-spinner {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  /* One coloured arc is what makes a rotation legible - a full ring turning
+     looks identical at every angle. */
+  border-top-color: var(--accent);
+}
+
+.ptr-spinner.is-spinning {
+  animation: ptr-spin 700ms linear infinite;
+}
+
+@keyframes ptr-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Slowed rather than stopped: the spinner is the only thing saying a refresh
+   is still running, so removing the motion entirely would leave it silent. */
+@media (prefers-reduced-motion: reduce) {
+  .ptr-spinner.is-spinning {
+    animation-duration: 1800ms;
+  }
 }
 
 /* Clears the bottom nav so the last row is never trapped under it. */
@@ -1152,6 +1214,98 @@ img.avatar {
 .powered a:active {
   color: var(--accent);
   border-bottom-color: var(--accent);
+}
+
+/* ----------------------------------------------------------- small phones -- */
+
+/* 360px and under - an older Android, or a phone held in a split view. The
+   layout already reflows; what it runs out of is horizontal padding, so the
+   gutters give back a few pixels rather than every row growing its own
+   breakpoint. The calendar is the element that actually needs them: seven
+   columns across 320px leaves each day under 41px before this. */
+@media (max-width: 360px) {
+  .topbar {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .screen {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .sheet {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  /* Chips are the one control that wraps to a second line purely on padding. */
+  .chips {
+    gap: 6px;
+  }
+
+  .chip {
+    padding: 7px 10px;
+  }
+}
+
+/* ------------------------------------------------------- short viewports -- */
+
+/* A phone held sideways. Height is the scarce axis here and nothing in the
+   layout knew it: the top bar and the bottom nav together claimed about 136px
+   of a 390px viewport, leaving a third of the screen for the list itself, and
+   a sheet capped at 88% opened barely taller than its own heading.
+ *
+ * Scoped to landscape as well as height so a tablet never matches - an iPad on
+ * its side is 768 tall - and so this cannot fire on a phone whose keyboard has
+ * simply shrunk the viewport, where the chrome is exactly what the user still
+ * needs to navigate with.
+ *
+ * Touch targets shrink but do not vanish: 40px is below the 48px the rest of
+ * the app keeps, and is the floor rather than a value worth going under. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .topbar {
+    min-height: 0;
+    padding-top: calc(var(--inset-top) + 8px);
+    padding-bottom: 8px;
+  }
+
+  .screen {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  .screen.has-nav {
+    padding-bottom: calc(58px + var(--inset-bottom) + 12px);
+  }
+
+  .nav button {
+    min-height: 40px;
+    padding: 6px 4px 7px;
+  }
+
+  .nav button .label {
+    font-size: 0.625rem;
+  }
+
+  /* Nearly the whole height: a sheet is modal, so the chrome behind it is not
+     being read anyway, and the form inside is what the user is here for. */
+  .sheet {
+    max-height: 96%;
+  }
+
+  .ws-menu-list {
+    max-height: 56vh;
+  }
+
+  /* Square cells cost six rows of full-width squares - far past the fold on a
+     short screen. The grid stays scannable at a squatter ratio, and the day
+     number and its tint are what carry the meaning, not the shape. */
+  .cal-day {
+    aspect-ratio: auto;
+    min-height: 34px;
+    padding: 4px 0;
+  }
 }
 
 /* ---------------------------------------------------------------- desktop -- */

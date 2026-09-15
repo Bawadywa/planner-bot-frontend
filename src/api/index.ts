@@ -17,7 +17,7 @@
 import * as local from "./local";
 import * as remote from "./remote";
 import { ApiError, DEBUG, dataSource, serverConfigured, unusableReason } from "../lib/http";
-import { activeWorkspace, setActiveWorkspace } from "../lib/workspace";
+import { activeWorkspace, invalidateWorkspaces, setActiveWorkspace } from "../lib/workspace";
 import { t, type Key } from "../i18n";
 import type { Board, ID, Invite, InvitePreview, Task, User, Workspace } from "../types";
 
@@ -397,14 +397,19 @@ export const removeMember = local.removeMember;
  *
  *  The workspace is added here rather than asked of the caller, for the same
  *  reason createBoard() does it: the share sheet collects boards, and the route
- *  will not mint a link without the workspace they live in. */
-export async function createInvite(boardIds: ID[]): Promise<Invite> {
-  if (!served.invites) return local.createInvite(boardIds);
+ *  will not mint a link without the workspace they live in.
+ *
+ *  The role comes from the caller because it is a choice, not context - the
+ *  sheet asks for it. Local mode takes it and ignores it: the mock has no roles
+ *  table to point at, and inventing one would put a permission on screen that
+ *  nothing anywhere honours. */
+export async function createInvite(boardIds: ID[], roleId: ID): Promise<Invite> {
+  if (!served.invites) return local.createInvite(boardIds, roleId);
 
   const workspace = await currentWorkspace();
   if (!workspace) throw new ApiError(422, t("api.noWorkspace"));
 
-  return remote.createInvite(boardIds, workspace);
+  return remote.createInvite(boardIds, workspace, roleId);
 }
 
 /** The links you minted in the workspace you are looking at.
@@ -438,7 +443,19 @@ export async function acceptInvite(token: string): Promise<Invite> {
   if (!served.invites) return local.acceptInvite(token);
 
   const invite = await remote.acceptInvite(token);
+
+  /* Announce it BEFORE the switch, so the lists are already reloading by the
+     time anything reacts to the new selection.
+
+     Both calls are needed and neither covers the other. The switch moves the
+     picker to a workspace that was just joined; the invalidation is what makes
+     the lists refetch at all - and it is the only one of the two that does
+     anything when the invite granted boards inside a workspace this identity
+     was ALREADY in, where the active id never changes and, before this,
+     nothing on screen moved until the app was reloaded. */
+  invalidateWorkspaces();
   if (invite.workspace_id) setActiveWorkspace(invite.workspace_id);
+
   return invite;
 }
 

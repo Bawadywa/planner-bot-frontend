@@ -649,17 +649,6 @@ function mintInviteToken(): string {
  *  into an aware datetime that asyncpg then refuses to bind. */
 const INVITE_TTL_DAYS = 7;
 
-/** BACKEND GAP 1. The role an invitee is given.
- *
- *  A guess, and it cannot be anything else: InviteCreate requires role_id and
- *  no route hands the client a role list. 3 is `worker`, which is the third row
- *  seeded by backend/app/seed.py - so it is right only for a database whose
- *  roles table was filled by that seed and never edited. A wrong id here is a
- *  foreign key violation at insert time, which surfaces as a 500 on create.
- *
- *  The fix is for the server to pick the role itself and drop the field. */
-const INVITE_ROLE_ID = 3;
-
 /** InviteRead carries no board_ids and POST /invite has no response_model, so
  *  what actually comes back is the whole ORM row: id, workspace_id, created_by,
  *  token, expires_at, role_id, accepted_by, accepted_at and the timestamps.
@@ -714,7 +703,11 @@ function toInvite(raw: Raw, ownerId: ID, boardIds: ID[] = []): Invite | null {
  *  Note what the route does NOT check: that the caller is a member of the
  *  workspace, or of the boards being handed out. Any id that exists will be
  *  written. Worth having before this is pointed at anything real. */
-export async function createInvite(boardIds: ID[], workspaceId: ID): Promise<Invite> {
+export async function createInvite(
+  boardIds: ID[],
+  workspaceId: ID,
+  roleId: ID,
+): Promise<Invite> {
   const owner = currentUserId();
   if (boardIds.length === 0) throw new ApiError(422, t("api.pickBoard"));
 
@@ -724,7 +717,10 @@ export async function createInvite(boardIds: ID[], workspaceId: ID): Promise<Inv
     workspace_id: numericId(workspaceId),
     token: mintInviteToken(),
     expires_at: toNaiveUtc(expires),
-    role_id: INVITE_ROLE_ID,
+    /* BACKEND GAP 1. InviteCreate requires role_id, and no route lists the
+       roles, so the id travels from a table this side keeps by hand - see
+       lib/role.ts, which is also where the hazard is written down. */
+    role_id: numericId(roleId),
     task_boards_ids: boardIds.map(numericId),
   };
 
@@ -762,6 +758,38 @@ export async function listInvites(_workspaceId: ID): Promise<Invite[]> {
   return [];
 }
 
+/** The titles behind an invite's board ids, or null when they cannot be read.
+ *
+ *  Scoped to the invite's workspace and not to the active one: the accept
+ *  screen opens on a link into a workspace this device has very likely never
+ *  selected, and api/index.ts's listBoards() would scope the lookup to the
+ *  wrong one and quietly match nothing.
+ *
+ *  Every failure funnels to null, which the screen renders as a count rather
+ *  than as an empty list. A 404 here means "not a member yet" and is the
+ *  expected answer for the person this screen exists for. */
+async function inviteBoardTitles(
+  workspaceId: ID | null,
+  boardIds: ID[] | null,
+): Promise<string[] | null> {
+  if (!workspaceId || !boardIds || boardIds.length === 0) return null;
+
+  try {
+    const boards = await listBoards(workspaceId);
+    const byId = new Map(boards.map((board) => [board.id, board.title]));
+
+    const titles = boardIds
+      .map((id) => byId.get(id))
+      .filter((title): title is string => title !== undefined);
+
+    // All or nothing - see the note in getInvite about understating a grant.
+    return titles.length === boardIds.length ? titles : null;
+  } catch (err) {
+    if (DEBUG) console.info("[planner] invite boards could not be named", err);
+    return null;
+  }
+}
+
 /** GET /invite?token=
  *
  *  The one route that cannot gate on membership: whoever opens the link is by
@@ -773,15 +801,24 @@ export async function listInvites(_workspaceId: ID): Promise<Invite[]> {
  *  those are worth showing as errors rather than reporting as a dead link.
  *
  *  BACKEND GAP 4: what comes back is the invite ROW, so the boards it grants
- *  are ids. They are deliberately NOT resolved here - listBoards() answers []
- *  for someone with no membership row, which is exactly this caller, so the
- *  lookup would turn every board into nothing and the screen would say the
- *  link grants nothing at all. `board_titles: null` says "cannot name them"
- *  instead, which is true and reads differently. A route returning titles is
- *  what fills them in.
+ *  arrive as ids and have to be named from somewhere else - which is the
+ *  lookup below, against the invite's OWN workspace rather than the one the
+ *  picker happens to be on.
  *
- *  The COUNT does survive, though: task_boards_ids is on InviteRead, and how
- *  many boards a link opens gives away nothing that naming them would not.
+ *  That lookup is allowed to fail, and failing is the normal case: a genuine
+ *  invitee has no membership row, so GET /task_boards answers 404 and the
+ *  names stay unknown. It succeeds for anyone who can already see the
+ *  workspace - the sender checking their own link, or someone being invited to
+ *  further boards in a workspace they are in - and those are the cases where a
+ *  name is worth more than a number.
+ *
+ *  Partial resolution is treated as no resolution on purpose. Naming two of
+ *  three boards reads as a complete list and understates the grant, so unless
+ *  every id resolves the screen falls back to the count, which is never wrong.
+ *  (An archived board is one way to land there: listBoards() drops those.)
+ *
+ *  The COUNT always survives: task_boards_ids is on InviteRead, and how many
+ *  boards a link opens gives away nothing that naming them would not.
  *
  *  `accepted_at` and `expires_at` need the explicit string checks below for
  *  the same reason `accepted_at` does in toInvite(): both are null on a live
@@ -806,12 +843,16 @@ export async function getInvite(token: string): Promise<InvitePreview | null> {
     throw new ApiError(502, t("api.inviteShape"));
   }
 
-  const boardIds = Array.isArray(raw.task_boards_ids) ? raw.task_boards_ids : null;
+  const boardIds = Array.isArray(raw.task_boards_ids)
+    ? raw.task_boards_ids
+        .map((value) => asId(value))
+        .filter((id): id is ID => id !== null)
+    : null;
 
   return {
     token: asString(raw.token, token),
     workspace_title: null,
-    board_titles: null,
+    board_titles: await inviteBoardTitles(asId(raw.workspace_id), boardIds),
     board_count: boardIds?.length ?? null,
     accepted: typeof raw.accepted_at === "string" && raw.accepted_at !== "",
     expires_at:

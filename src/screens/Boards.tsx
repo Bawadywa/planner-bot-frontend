@@ -2,9 +2,11 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import * as api from "../api";
 import { Sheet } from "../components/Sheet";
 import { WorkspacePicker } from "../components/WorkspacePicker";
+import { PullArea } from "../components/PullIndicator";
 import { ChevronRight, PlusIcon } from "../components/Icons";
 import { haptic, hapticError } from "../telegram";
-import { useActiveWorkspace } from "../lib/workspace";
+import { useActiveWorkspace, useWorkspacesRevision } from "../lib/workspace";
+import { usePullToRefresh } from "../lib/pullToRefresh";
 import { useT } from "../i18n";
 import type { Board, ID, Task } from "../types";
 
@@ -20,6 +22,9 @@ export function Boards({ onOpenBoard }: BoardsProps) {
      the dependency list below so that switching workspaces reloads the screen,
      which is the whole visible effect of the picker in the bar above. */
   const workspace = useActiveWorkspace();
+  /* Accepting an invite can add boards to the workspace already on screen,
+     which moves no active id and so would leave this list untouched. */
+  const revision = useWorkspacesRevision();
   const [boards, setBoards] = useState<Board[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,11 +67,16 @@ export function Boards({ onOpenBoard }: BoardsProps) {
     } finally {
       setLoading(false);
     }
-  }, [t, workspace]);
+  }, [t, workspace, revision]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  /* The same load the screen already runs, so a pull and a workspace switch
+     fetch exactly the same things - and load() owns its own error reporting,
+     which is why the gesture needs no failure handling of its own. */
+  const pull = usePullToRefresh(load);
 
   const openCount = (boardId: ID) =>
     tasks.filter((t) => t.board_id === boardId && !t.done).length;
@@ -88,49 +98,51 @@ export function Boards({ onOpenBoard }: BoardsProps) {
         </button>
       </header>
 
-      <div className="screen has-nav">
-        {error && <div className="error">{error}</div>}
+      <div className="screen has-nav" ref={pull.ref}>
+        <PullArea pull={pull}>
+          {error && <div className="error">{error}</div>}
 
-        {loading ? null : boards.length === 0 && !error ? (
-          <div className="empty">
-            <div className="title">{t("boards.empty.title")}</div>
-            <p>
-              {showTasks
-                ? t("boards.empty.withTasks")
-                : t("boards.empty.boardsOnly")}
-            </p>
-            <button className="btn btn-primary" onClick={() => setCreating(true)}>
-              <PlusIcon />
-              {t("boards.new")}
-            </button>
-          </div>
-        ) : (
-          <div className="list">
-            {boards.map((board) => {
-              const open = openCount(board.id);
-              return (
-                <button
-                  key={board.id}
-                  className="row"
-                  onClick={() => {
-                    haptic();
-                    onOpenBoard(board.id);
-                  }}
-                >
-                  <div className="row-main">
-                    <div className="row-title">{board.title}</div>
-                    {showTasks && (
-                      <div className="row-sub">
-                        {open === 0 ? t("boards.allDone") : t("boards.open", { count: open })}
-                      </div>
-                    )}
-                  </div>
-                  <ChevronRight />
-                </button>
-              );
-            })}
-          </div>
-        )}
+          {loading ? null : boards.length === 0 && !error ? (
+            <div className="empty">
+              <div className="title">{t("boards.empty.title")}</div>
+              <p>
+                {showTasks
+                  ? t("boards.empty.withTasks")
+                  : t("boards.empty.boardsOnly")}
+              </p>
+              <button className="btn btn-primary" onClick={() => setCreating(true)}>
+                <PlusIcon />
+                {t("boards.new")}
+              </button>
+            </div>
+          ) : (
+            <div className="list">
+              {boards.map((board) => {
+                const open = openCount(board.id);
+                return (
+                  <button
+                    key={board.id}
+                    className="row"
+                    onClick={() => {
+                      haptic();
+                      onOpenBoard(board.id);
+                    }}
+                  >
+                    <div className="row-main">
+                      <div className="row-title">{board.title}</div>
+                      {showTasks && (
+                        <div className="row-sub">
+                          {open === 0 ? t("boards.allDone") : t("boards.open", { count: open })}
+                        </div>
+                      )}
+                    </div>
+                    <ChevronRight />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </PullArea>
       </div>
 
       {creating && (

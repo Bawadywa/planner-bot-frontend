@@ -164,12 +164,7 @@ export const uk: Record<Key, Phrase> = {
   "settings.fallbackNote":
     "Меню «Поділитися» доступне лише в застосунку Telegram — посилання відкрилося у вкладці браузера. Воно є в списку нижче, готове до копіювання.",
   "settings.inviteText": "Приєднуйтеся до {what} у Planner",
-  "settings.inviteBoards": {
-    one: "{count} дошки",
-    few: "{count} дошок",
-    many: "{count} дошок",
-    other: "{count} дошок",
-  },
+  "settings.inviteTextPlain": "Приєднуйтеся до Planner",
   "settings.data": "Дані",
   "settings.backend": "Сервер",
   "settings.backendSub": "Дошки та ваш обліковий запис зберігаються на сервері.",
@@ -187,11 +182,23 @@ export const uk: Record<Key, Phrase> = {
   "settings.sheet.noBotUsername":
     "BOT_USERNAME не задано у config.js — посилання вестиме на t.me/?startapp=… і нічого не відкриє.",
   "settings.sheet.boards": "Дошки, які вони зможуть відкрити",
+  "settings.sheet.role": "Роль",
   "settings.sheet.selected": "вибрано: {count}",
   "settings.sheet.hint":
     "Далі Telegram відкриє власне меню «Поділитися» — пошук, останні чати й контакти — і надішле посилання від вашого імені. Нічого не залишить цей пристрій, доки ви там когось не виберете.",
   "settings.sheet.submit": "Вибрати чат у Telegram",
   "settings.sheet.failed": "Не вдалося створити запрошення.",
+
+  /* ---------------------------------------------------------------- roles -- */
+  "roles.admin": "Адмін",
+  "roles.adminHint":
+    "Повний контроль, зокрема видалення робочого простору разом із усім вмістом. Лише для того, кому ви довіряєте обліковий запис.",
+  "roles.manager": "Менеджер",
+  "roles.managerHint": "Керує наданими дошками — завданнями, дедлайнами та людьми.",
+  "roles.worker": "Учасник",
+  "roles.workerHint": "Працює на наданих дошках. Безпечний варіант для посилання в чат.",
+  "roles.notEnforced":
+    "Роль зберігається разом із членством, але сервер ще не перевіряє її в жодному маршруті — сьогодні кожен учасник може все.",
 
   /* --------------------------------------------------------------- invite -- */
   "invite.title": "Вас запросили",

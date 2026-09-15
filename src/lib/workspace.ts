@@ -30,11 +30,25 @@ function read(): ID | null {
 
 let active: ID | null = read();
 
+/* Bumped whenever this identity's MEMBERSHIPS change - a workspace created, or
+   an invite accepted - as opposed to which of them is being looked at.
+ *
+ * The two are genuinely different events and only one of them was modelled.
+ * Accepting an invite into a workspace you are already in changes no active id
+ * at all, so nothing re-rendered and the boards you were just granted stayed
+ * invisible until the app was reloaded. A counter gives those screens something
+ * to depend on that changes even when the selection does not. */
+let revision = 0;
+
 const listeners = new Set<() => void>();
 
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
+}
+
+function notify(): void {
+  for (const listener of listeners) listener();
 }
 
 /** The workspace every board and task read is scoped to, or null before the
@@ -61,7 +75,22 @@ export function setActiveWorkspace(id: ID | null): void {
     /* nothing to do - the switch still holds in memory for this launch */
   }
 
-  for (const listener of listeners) listener();
+  notify();
+}
+
+/** Says that the set of workspaces or boards this identity can reach has
+ *  changed, so anything listing them should read again.
+ *
+ *  Called after an invite is accepted, which can add a workspace, add boards
+ *  inside one already joined, or both. It carries no payload on purpose: the
+ *  screens already know how to fetch, they only needed to be told to. */
+export function invalidateWorkspaces(): void {
+  revision += 1;
+  notify();
+}
+
+function workspacesRevision(): number {
+  return revision;
 }
 
 /** Subscribes a component to workspace switches.
@@ -70,4 +99,13 @@ export function setActiveWorkspace(id: ID | null): void {
  *  switch reloads the screen the way a language switch re-renders it. */
 export function useActiveWorkspace(): ID | null {
   return useSyncExternalStore(subscribe, activeWorkspace, () => null);
+}
+
+/** Subscribes a component to membership changes.
+ *
+ *  Put it in the dependency list of whatever loads workspaces or boards, next
+ *  to useActiveWorkspace(). The number itself means nothing - only that it is
+ *  different from last time. */
+export function useWorkspacesRevision(): number {
+  return useSyncExternalStore(subscribe, workspacesRevision, () => 0);
 }

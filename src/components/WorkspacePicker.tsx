@@ -17,7 +17,11 @@ import { WorkspaceSheet } from "./WorkspaceSheet";
 import { CheckIcon, ChevronDown, PlusIcon } from "./Icons";
 import { haptic, pushBack } from "../telegram";
 import { useT } from "../i18n";
-import { setActiveWorkspace, useActiveWorkspace } from "../lib/workspace";
+import {
+  setActiveWorkspace,
+  useActiveWorkspace,
+  useWorkspacesRevision,
+} from "../lib/workspace";
 import type { ID, Workspace } from "../types";
 
 export function WorkspacePicker() {
@@ -33,6 +37,12 @@ export function WorkspacePicker() {
      under it. */
   const localOnly = api.missingFor("workspaces");
 
+  /* Any membership change - an invite accepted, a workspace created - makes
+     this list wrong, and the list is what the repair effect below judges the
+     active id against. Reloading on the signal is what stops a workspace you
+     were just added to reading as one that does not exist. */
+  const revision = useWorkspacesRevision();
+
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -46,7 +56,7 @@ export function WorkspacePicker() {
     } catch (err) {
       setError(err instanceof Error ? err.message : t("workspaces.loadFailed"));
     }
-  }, [t]);
+  }, [t, revision]);
 
   useEffect(() => {
     void load();
@@ -58,12 +68,36 @@ export function WorkspacePicker() {
    *  minted in the other data source, since local ids are uuids and server ids
    *  are ints. Left alone it matches no board at all, which looks like every
    *  board was deleted rather than like a stale setting. Also what picks the
-   *  first workspace on a launch that has never chosen one. */
+   *  first workspace on a launch that has never chosen one.
+   *
+   *  It cannot tell "gone" from "not fetched yet", and that is the whole
+   *  hazard: an active id this list has not caught up with looks exactly like
+   *  a deleted one, and gets reverted to workspaces[0]. Anything that switches
+   *  to a workspace this component does not already hold must put it in the
+   *  list FIRST - see onSaved below. The `workspaces.length > 0` guard is what
+   *  keeps a fresh mount, whose list is still empty, from doing the same. */
+  const recheckedFor = useRef<ID | null>(null);
+
   useEffect(() => {
-    if (workspaces.length > 0 && !workspaces.some((w) => w.id === active)) {
-      setActiveWorkspace(workspaces[0].id);
+    if (workspaces.length === 0) return;
+
+    if (workspaces.some((w) => w.id === active)) {
+      recheckedFor.current = null;
+      return;
     }
-  }, [workspaces, active]);
+
+    /* Unknown id. "Gone" and "joined a moment ago" look identical from here,
+       so the list gets one fresh read before the choice is thrown away - the
+       difference between the two is exactly one fetch. */
+    if (recheckedFor.current !== active) {
+      recheckedFor.current = active;
+      void load();
+      return;
+    }
+
+    // Still absent from a list fetched since. Genuinely gone.
+    setActiveWorkspace(workspaces[0].id);
+  }, [workspaces, active, load]);
 
   // Tap anywhere else, Escape, or Telegram's back arrow closes the menu.
   useEffect(() => {
@@ -164,8 +198,25 @@ export function WorkspacePicker() {
           onClose={() => setCreating(false)}
           onSaved={async (workspace) => {
             setCreating(false);
-            // Switch to it first: the point of creating one is to be in it, and
-            // the boards behind the sheet should already be its own.
+
+            /* Into the list BEFORE the switch, or the switch does not survive
+               the next render.
+
+               The row is minutes old and `workspaces` here is the list as it
+               was before the sheet opened, so the repair effect above sees an
+               active id it cannot find and helpfully reverts it to
+               workspaces[0] - landing the user in their first workspace with
+               no sign anything was created. The refetch below then agrees with
+               that, because by the time it lands the choice has already moved.
+
+               Seeding it here closes the window: the effect finds the id and
+               leaves it alone. load() still runs, and replaces this optimistic
+               row with the server's own. */
+            setWorkspaces((was) =>
+              was.some((w) => w.id === workspace.id) ? was : [...was, workspace],
+            );
+            // The point of creating one is to be in it, and the boards behind
+            // the sheet should already be its own.
             setActiveWorkspace(workspace.id);
             await load();
           }}
