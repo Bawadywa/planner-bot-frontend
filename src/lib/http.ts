@@ -209,6 +209,22 @@ export function asString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
+/** The inverse of asIso(): a UTC instant written the way the timestamp columns
+ *  want it, with no zone designator at all.
+ *
+ *  The columns are `timestamp without time zone`, so a value carrying `Z` or an
+ *  offset is the wrong shape going in - Pydantic parses it into an AWARE
+ *  datetime, and asyncpg will not bind one of those to a naive column.
+ *
+ *  Dropping the designator rather than shifting the clock is the whole point:
+ *  the instant stays UTC, which is what every server_default=func.now() row in
+ *  the database already is, so the column is one zone end to end. The zone comes
+ *  back on the way out - asIso() re-attaches it - and only then does anything
+ *  convert to the reader's own, at render time. */
+export function toNaiveUtc(at: Date): string {
+  return at.toISOString().replace(/Z$/, "");
+}
+
 /** SQLAlchemy datetimes arrive as naive ISO strings, which Date would read as
  *  local time; server_default=func.now() makes them UTC, so an unqualified one
  *  is treated as such. Anything unparseable becomes the epoch, which sorts

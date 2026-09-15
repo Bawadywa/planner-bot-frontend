@@ -68,6 +68,7 @@ import {
   get,
   post,
   request,
+  toNaiveUtc,
   type Raw,
 } from "../lib/http";
 import { toPriorityCode } from "../lib/priority";
@@ -637,7 +638,13 @@ function mintInviteToken(): string {
   return `inv_${b64}`;
 }
 
-/** BACKEND GAP 1. How long a link this app mints stays good for. */
+/** BACKEND GAP 1. How long a link this app mints stays good for.
+ *
+ *  Sent as naive UTC, through toNaiveUtc(): Invite.expires_at is a
+ *  `timestamp without time zone`, so the database holds UTC and nothing else,
+ *  and the reader's own zone is applied at render time rather than written into
+ *  the row. Sending toISOString() as-is puts a `Z` on it, which Pydantic turns
+ *  into an aware datetime that asyncpg then refuses to bind. */
 const INVITE_TTL_DAYS = 7;
 
 /** BACKEND GAP 1. The role an invitee is given.
@@ -714,7 +721,7 @@ export async function createInvite(boardIds: ID[], workspaceId: ID): Promise<Inv
   const body = {
     workspace_id: numericId(workspaceId),
     token: mintInviteToken(),
-    expires_at: expires.toISOString(),
+    expires_at: toNaiveUtc(expires),
     role_id: INVITE_ROLE_ID,
     task_boards_ids: boardIds.map(numericId),
   };
@@ -791,7 +798,7 @@ export async function acceptInvite(token: string): Promise<Invite> {
   const body = {
     token,
     workspace_id: 0,
-    expires_at: new Date().toISOString(),
+    expires_at: toNaiveUtc(new Date()),
     accepted_by: null,
     accepted_at: null,
   };
