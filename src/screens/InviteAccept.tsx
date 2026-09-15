@@ -3,6 +3,7 @@ import * as api from "../api";
 import { Sheet } from "../components/Sheet";
 import { CheckIcon } from "../components/Icons";
 import { haptic, hapticError } from "../telegram";
+import { formatDateTime, isKnownTime } from "../lib/date";
 import { useT } from "../i18n";
 import type { InvitePreview } from "../types";
 
@@ -70,6 +71,16 @@ export function InviteAccept({ token, onDone }: InviteAcceptProps) {
       live = false;
     };
   }, [token, t]);
+
+  /* Expiry is decided here rather than trusted from a flag, because the row
+     carries the moment and not a verdict. The server checks it again on accept
+     and is the one that counts - this only saves offering a button that cannot
+     work, and explains why. A missing or unreadable expires_at means unknown,
+     which is not the same as expired: the join stays on offer. */
+  const preview = lookup.state === "found" ? lookup.preview : null;
+  const expiresAt =
+    preview?.expires_at && isKnownTime(preview.expires_at) ? preview.expires_at : null;
+  const expired = expiresAt !== null && new Date(expiresAt).getTime() <= Date.now();
 
   async function join() {
     if (busy) return;
@@ -161,22 +172,33 @@ export function InviteAccept({ token, onDone }: InviteAcceptProps) {
 
           {lookup.preview.accepted ? (
             <div className="hint">{t("invite.alreadyUsed")}</div>
+          ) : expired && expiresAt ? (
+            <div className="hint">{t("invite.expired", { when: formatDateTime(expiresAt) })}</div>
           ) : (
-            <button
-              className="btn btn-primary btn-block"
-              /* Disabled only when the preview positively says the link grants
-                 nothing. An unknown grant (board_titles null) still offers the
-                 join - the server is the one that can actually decide, and
-                 refusing here would hide a working invite behind a missing
-                 read route. */
-              disabled={busy || lookup.preview.board_titles?.length === 0}
-              onClick={() => void join()}
-            >
-              {t("invite.join")}
-            </button>
+            <>
+              {/* Only worth saying while it is still true. On a spent or
+                  expired link the line above is the whole story. */}
+              {expiresAt && (
+                <div className="hint" style={{ marginBottom: 10 }}>
+                  {t("invite.expiresAt", { when: formatDateTime(expiresAt) })}
+                </div>
+              )}
+              <button
+                className="btn btn-primary btn-block"
+                /* Disabled only when the preview positively says the link
+                   grants nothing. An unknown grant (board_titles null) still
+                   offers the join - the server is the one that can actually
+                   decide, and refusing here would hide a working invite behind
+                   a preview that cannot name boards. */
+                disabled={busy || lookup.preview.board_titles?.length === 0}
+                onClick={() => void join()}
+              >
+                {t("invite.join")}
+              </button>
+            </>
           )}
 
-          {lookup.preview.accepted && (
+          {(lookup.preview.accepted || expired) && (
             <button className="btn btn-secondary btn-block" style={{ marginTop: 10 }} onClick={onDone}>
               {t("common.close")}
             </button>

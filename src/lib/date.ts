@@ -97,6 +97,20 @@ export function formatWhen(iso: string): string {
   return then.toLocaleDateString(locale(), { day: "numeric", month: "short" });
 }
 
+/** An absolute timestamp with its time, in the reader's own zone.
+ *
+ *  The value arrives as UTC (asIso() in lib/http.ts attaches the zone the
+ *  naive column does not carry), and Date does the conversion - so an invite
+ *  that expires at 12:00 UTC reads as 14:00 to someone in Kyiv, which is the
+ *  only form of it worth showing. Intl picks the wording and the order of the
+ *  parts, so this needs nothing per language. */
+export function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString(locale(), {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
 /** Month names in the active language, January first.
  *
  *  Built from Intl rather than a table, so a new language needs no month list.

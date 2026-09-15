@@ -195,8 +195,10 @@ export const en = {
   "invite.boards": "Boards this link opens",
   "invite.boardsDeleted": "Those boards have since been deleted.",
   "invite.noPreview":
-    "The server cannot say yet — backend/app/main.py has no GET /invite route, so the boards this link opens are only known once you join.",
+    "Not shown — the server identifies the boards by number, and their names are only readable once you are a member. Joining is what makes them visible.",
   "invite.alreadyUsed": "This link has already been used.",
+  "invite.expiresAt": "This link works until {when}.",
+  "invite.expired": "This link expired on {when}. Ask whoever sent it for a new one.",
   "invite.join": "Join",
   "invite.joined": "You’re in",
   "invite.joinedBody": "The board is on your Taskboard tab now.",

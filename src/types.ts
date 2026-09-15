@@ -142,12 +142,18 @@ export interface InvitePreview {
   token: string;
   /** null in local mode, which has no workspace to name for an invite. */
   workspace_title: string | null;
-  /** What the link grants.
+  /** What the link grants, by name.
    *
    *  The two empty cases are NOT the same and the screen reads them apart:
    *  `[]` means the invite grants nothing (its boards were deleted), `null`
-   *  means nothing could look - which is what api mode answers today, since
-   *  backend/app/main.py has no GET /invite route to ask. */
+   *  means nothing could look. api mode answers null: GET /invite hands back
+   *  the invite ROW, so the boards arrive as ids, and an invitee has no
+   *  membership to resolve an id into a title with. */
   board_titles: string[] | null;
   accepted: boolean;
+  /** When the link stops working, as a UTC ISO string, or null when unknown.
+   *
+   *  Stored UTC and rendered in the reader's own zone - see toNaiveUtc() and
+   *  asIso() in lib/http.ts, which are the two ends of that. */
+  expires_at: string | null;
 }

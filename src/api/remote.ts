@@ -26,6 +26,7 @@
      PUT    /comment     -> the updated CommentRead, content and image replaced
      DELETE /comment     -> {id} in the body
      POST   /invite      -> the Invite row, from one flat InviteCreate body
+     GET    /invite      -> the Invite row for ?token=, for a non-member
      POST   /invite/accept -> the Invite row, from {token} plus four ignored fields
      DELETE /invite      -> {id} in the body
      GET    /health      -> 200, empty body
@@ -618,8 +619,9 @@ export async function deleteComment(id: ID): Promise<void> {
         accepted_at - all required - though the handler reads only `token`.
         They are sent as filler.
      3. There is no GET /invites, so Settings cannot list links.
-     4. There is no GET /invite?token=, so the accept screen cannot say what a
-        link grants before it is redeemed.
+     4. GET /invite answers with the invite ROW rather than a preview, so the
+        boards it grants arrive as ids. An invitee has no membership to turn
+        those into titles with, so the accept screen names no boards.
    ---------------------------------------------------------------------------- */
 
 /** BACKEND GAP 1. Mirrors inviteToken() in local.ts - url-safe, ~96 bits,
@@ -760,22 +762,57 @@ export async function listInvites(_workspaceId: ID): Promise<Invite[]> {
   return [];
 }
 
-/** GET /invite?token= - BACKEND GAP 4, no such route.
+/** GET /invite?token=
  *
- *  A placeholder preview rather than null, because null is the accept screen's
- *  word for "that link is dead" and this link may be perfectly good - nothing
- *  here can tell. `board_titles: null` is the distinction: [] means the invite
- *  grants nothing, null means nothing could look.
+ *  The one route that cannot gate on membership: whoever opens the link is by
+ *  definition not a member yet, so it answers on the token alone.
  *
- *  So the screen offers the join and lets the server be the judge, which is
- *  the honest split while the preview does not exist. */
+ *  Null on 404, not a throw. An unknown token is a normal outcome here - a
+ *  revoked link, or one that was never real - and the accept screen has a
+ *  sentence for it. Anything else (offline, 401, a 500) still raises, because
+ *  those are worth showing as errors rather than reporting as a dead link.
+ *
+ *  BACKEND GAP 4: what comes back is the invite ROW, so the boards it grants
+ *  are ids. They are deliberately NOT resolved here - listBoards() answers []
+ *  for someone with no membership row, which is exactly this caller, so the
+ *  lookup would turn every board into nothing and the screen would say the
+ *  link grants nothing at all. `board_titles: null` says "cannot name them"
+ *  instead, which is true and reads differently. A route returning titles is
+ *  what fills them in.
+ *
+ *  `accepted_at` and `expires_at` need the explicit string checks below for
+ *  the same reason `accepted_at` does in toInvite(): both are null on a live
+ *  invite, and asIso() turns anything it cannot read into the epoch - which
+ *  would mark every fresh link as used and long expired. */
 export async function getInvite(token: string): Promise<InvitePreview | null> {
-  if (DEBUG) {
-    console.info(
-      "[planner] invite preview unavailable: backend/app/main.py has no GET /invite route",
-    );
+  let raw: Raw;
+  try {
+    raw = asRaw(await get<unknown>("/invite", { token }));
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
   }
-  return { token, workspace_title: null, board_titles: null, accepted: false };
+
+  /* The row has to be recognisable as one. The route declares no
+     response_model, so a shape change here arrives silently - and a body that
+     carries no token at all is the signature of the handler returning
+     something other than the invite. Treating that as "no such invite" would
+     send the reader to the dead-link message for a link that is fine. */
+  if (!asString(raw.token)) {
+    if (DEBUG) console.warn("[planner] GET /invite did not return an invite row", raw);
+    throw new ApiError(502, t("api.inviteShape"));
+  }
+
+  return {
+    token: asString(raw.token, token),
+    workspace_title: null,
+    board_titles: null,
+    accepted: typeof raw.accepted_at === "string" && raw.accepted_at !== "",
+    expires_at:
+      typeof raw.expires_at === "string" && raw.expires_at !== ""
+        ? asIso(raw.expires_at)
+        : null,
+  };
 }
 
 /** POST /invite/accept

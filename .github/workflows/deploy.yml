@@ -21,21 +21,30 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
+          # Explicit, and it has to stay that way: setup-node v5 added automatic
+          # caching driven by a `packageManager` field in package.json, and v6
+          # narrowed that to npm only. Naming the cache here means neither
+          # change decides anything for us.
           cache: npm
 
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
 
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
+          # public/.nojekyll is a dotfile, and v4 of this action stopped
+          # including those in the artifact - silently, since a missing
+          # .nojekyll only shows up as Jekyll mangling the published site
+          # rather than as a failed build. v5 brought the input back.
+          include-hidden-files: true
 
   deploy:
     needs: build
@@ -45,4 +54,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

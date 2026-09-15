@@ -764,6 +764,10 @@ export async function getInvite(token: string): Promise<InvitePreview | null> {
       .map((id) => db.boards.find((b) => b.id === id)?.title)
       .filter((title): title is string => Boolean(title)),
     accepted: invite.accepted_at !== null,
+    // The mock has never minted an expiry; a local link is good until the
+    // store is wiped. Null rather than a far-future date, because "unknown"
+    // is what it is and the screen says nothing when it cannot say something.
+    expires_at: null,
   };
 }
 
