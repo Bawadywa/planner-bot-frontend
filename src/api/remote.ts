@@ -34,10 +34,15 @@
    Workspaces are served now. Membership is a real table - workspacemembers,
    keyed (workspace_id, user_id) - so GET /workspaces answers with the
    workspaces this identity was ADDED to rather than the ones it owns, and
-   GET /task_boards takes the workspace as a REQUIRED query parameter and 404s
-   when the caller is not a member of it. That is why listBoards() and
-   createBoard() below take a workspace id where their local.ts twins take
-   none: the server will not answer without one.
+   GET /task_boards takes the workspace as a REQUIRED query parameter. That is
+   why listBoards() and createBoard() below take a workspace id where their
+   local.ts twins take none: the server will not answer without one.
+
+   What GET /task_boards no longer does is CHECK anything. It returns every
+   board in the workspace to any caller who knows the id - no workspace
+   membership test, no taskboardmembers filter (main.py marks both spots
+   `fix user_id not used (not safe)`). The invite preview below leans on that
+   to name boards; nothing else here should, and it is worth closing.
 
    CommentRead now carries id, user_id and created_at, so a thread maps
    cleanly. The shape guard in listComments() stays as a tripwire rather than a
@@ -249,12 +254,13 @@ function toBoard(raw: Raw, ownerId: ID): Board | null {
 /** GET /task_boards?workspace_id=
  *
  *  The workspace is required by the route rather than optional scoping the
- *  client could skip, and the handler 404s when the caller has no membership
- *  row for it. api/index.ts is what resolves which workspace that is.
+ *  client could skip. api/index.ts is what resolves which workspace that is.
  *
- *  What comes back is filtered twice server-side: by the workspace, and by
- *  taskboardmembers. Being in a workspace is NOT on its own enough to see
- *  every board in it.
+ *  It used to be filtered twice server-side - by the workspace and by
+ *  taskboardmembers - and is now filtered once, by the workspace alone. The
+ *  route 404s only when the workspace does not exist, so this answers with
+ *  every board in it whether or not the caller is a member of any of them.
+ *  Nothing on this side can restore that check; it is a server-side fix.
  *
  *  Archived boards are dropped: the column exists server-side and the UI has no
  *  archive view, so showing them would put a board on the list with no way to
@@ -320,9 +326,12 @@ export async function renameBoard(_id: ID, _title: string): Promise<Board> {
  *  it - so this works from a browser, though some proxies are known to strip
  *  DELETE bodies and a path parameter would be the safer shape.
  *
- *  Only the board's OWNER can delete it - the route matches on owner_id, not on
- *  membership - and it answers 200 either way, so an invited member's delete is
- *  indistinguishable from a real one until the list reloads unchanged.
+ *  It refuses out loud now, where it used to answer 200 to everyone and delete
+ *  nothing: 404 when the board does not exist, 401 when the caller is not a
+ *  member of it, 403 when their role on it is neither admin nor manager. All
+ *  three arrive as an ApiError carrying the server's own wording, which the
+ *  board screen already shows - so a member who may not delete finally learns
+ *  that instead of watching the list reload unchanged.
  *
  *  The tasks go with it in the database: Task.task_board_id is ON DELETE
  *  CASCADE. The answer is ignored - there is nothing left to show. */
@@ -409,7 +418,11 @@ export async function listTasks(boardId: ID): Promise<Task[]> {
     .sort(boardOrder);
 }
 
-/** GET /task?id= */
+/** GET /task?id=
+ *
+ *  Board-scoped now rather than author-scoped: the route checks the caller is
+ *  a member of the task's board instead of matching on user_id, so a shared
+ *  board opens everyone's tasks and not only your own rows. */
 export async function getTask(id: ID): Promise<Task> {
   const task = toTask(asRaw(await get<unknown>("/task", { id: numericId(id) })));
   if (!task) throw new ApiError(404, t("api.taskNotFound"));
@@ -435,8 +448,12 @@ export async function createTask(boardId: ID, input: TaskInput): Promise<Task> {
  *
  *  The route replaces every field from the body rather than merging, so a
  *  partial patch has to be completed first - which is what the callers pass.
- *  Read-then-write is a race in principle; with one Telegram user per account
- *  editing one task at a time, it is not one in practice. */
+ *
+ *  Read-then-write is a race in principle, and it is closer to one than it
+ *  was: the route gates on board membership rather than on authorship now, so
+ *  two people on a shared board can be editing the same task at once and the
+ *  later write replaces every field of the earlier one. Still not worth a
+ *  PATCH until the route has one. */
 export async function updateTask(
   id: ID,
   patch: Partial<Omit<Task, "id" | "board_id" | "created_at">>,
@@ -615,13 +632,9 @@ export async function deleteComment(id: ID): Promise<void> {
         has to mint all three. The token is the one secret in the flow and has
         no business being chosen out here; `role_id` is worse, because nothing
         on this side knows what the roles table contains.
-     2. InviteAccept declares workspace_id, expires_at, accepted_by and
-        accepted_at - all required - though the handler reads only `token`.
-        They are sent as filler.
-     3. There is no GET /invites, so Settings cannot list links.
-     4. GET /invite answers with the invite ROW rather than a preview, so the
-        boards it grants arrive as ids. An invitee has no membership to turn
-        those into titles with, so the accept screen names no boards.
+     2. There is no GET /invites, so Settings cannot list links.
+     3. GET /invite answers with the invite ROW rather than a preview, so the
+        boards it grants arrive as ids and have to be named separately.
    ---------------------------------------------------------------------------- */
 
 /** BACKEND GAP 1. Mirrors inviteToken() in local.ts - url-safe, ~96 bits,
@@ -765,9 +778,16 @@ export async function listInvites(_workspaceId: ID): Promise<Invite[]> {
  *  selected, and api/index.ts's listBoards() would scope the lookup to the
  *  wrong one and quietly match nothing.
  *
+ *  This USED to fail for the very person it exists for - GET /task_boards
+ *  required workspace membership and an invitee has none - which is why the
+ *  screen could only ever show a count. That check is gone from the route, so
+ *  the names now resolve for everyone holding a link. The fallback below stays
+ *  regardless: it is what the screen shows if the check ever comes back, and
+ *  it is the honest answer for a board that has been archived or deleted since
+ *  the invite was minted.
+ *
  *  Every failure funnels to null, which the screen renders as a count rather
- *  than as an empty list. A 404 here means "not a member yet" and is the
- *  expected answer for the person this screen exists for. */
+ *  than as an empty list. */
 async function inviteBoardTitles(
   workspaceId: ID | null,
   boardIds: ID[] | null,
@@ -864,17 +884,14 @@ export async function getInvite(token: string): Promise<InvitePreview | null> {
 
 /** POST /invite/accept
  *
- *  BACKEND GAP 2: the handler reads `data.token` and nothing else, but
- *  InviteAccept declares workspace_id, expires_at, accepted_by and accepted_at
- *  with no defaults - REQUIRED, in Pydantic v2 - so the request is rejected at
- *  validation without them. The values below are filler and are IGNORED; the
- *  workspace in particular is not something this side could know, since the
- *  whole point is that the caller has never seen that workspace. Deleting the
- *  four fields from the schema deletes them from here.
+ *  Just the token. InviteAccept used to declare workspace_id, expires_at,
+ *  accepted_by and accepted_at as required alongside it, none of which the
+ *  handler read and none of which an invitee could know - they were sent as
+ *  filler to get past validation. The schema is down to the one field that
+ *  means anything, so the filler is gone.
  *
- *  Two kinds of membership should come out of this: a workspacemembers row and
- *  one taskboardmembers row per board. Both are needed - get_task_boards checks
- *  the workspace before it looks at a board at all - which is why the caller
+ *  Two kinds of membership come out of this: a workspacemembers row and one
+ *  taskboardmembers row per board. Both are written - which is why the caller
  *  re-reads the workspace list afterwards and not only the boards. */
 export async function acceptInvite(token: string): Promise<Invite> {
   const owner = currentUserId();
@@ -884,15 +901,7 @@ export async function acceptInvite(token: string): Promise<Invite> {
      against the invites table is this exact string. */
   if (DEBUG) console.info("[planner] accepting invite:", token);
 
-  const body = {
-    token,
-    workspace_id: 0,
-    expires_at: toNaiveUtc(new Date()),
-    accepted_by: null,
-    accepted_at: null,
-  };
-
-  const invite = toInvite(asRaw(await post<unknown>("/invite/accept", body)), owner);
+  const invite = toInvite(asRaw(await post<unknown>("/invite/accept", { token })), owner);
   if (!invite) throw new ApiError(502, t("api.inviteShape"));
   return invite;
 }

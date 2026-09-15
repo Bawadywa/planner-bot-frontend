@@ -26,16 +26,14 @@ export interface InviteRole {
   /** Dictionary key rather than a label, so the sheet re-renders in the
    *  sender's language when they switch it mid-invite. */
   label: Key;
-  /** One line under the chips, saying what the choice actually means. */
-  hint: Key;
 }
 
 /* In the order seed.py inserts them, which is the order the ids run in.
    Offered widest-first, the way a permission list reads. */
 export const INVITE_ROLES: readonly InviteRole[] = [
-  { id: "1", label: "roles.admin", hint: "roles.adminHint" },
-  { id: "2", label: "roles.manager", hint: "roles.managerHint" },
-  { id: "3", label: "roles.worker", hint: "roles.workerHint" },
+  { id: "1", label: "roles.admin" },
+  { id: "2", label: "roles.manager" },
+  { id: "3", label: "roles.worker" },
 ];
 
 /** What the sheet opens on.

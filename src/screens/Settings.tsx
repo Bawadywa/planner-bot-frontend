@@ -666,21 +666,6 @@ function InviteSheet({
               </button>
             ))}
           </div>
-          {/* The chosen role's own line, rather than all three at once: the
-              chips are the choice and this says what the choice means. */}
-          <div className="hint" style={{ marginTop: 8 }}>
-            {t(INVITE_ROLES.find((r) => r.id === role)?.hint ?? "roles.workerHint")}
-          </div>
-          {/* Said plainly, because the chips above otherwise promise a
-              permission model that does not exist yet: the role reaches
-              workspacemembers.role_id and no route reads it back. */}
-          <div className="hint" style={{ marginTop: 6 }}>
-            {t("roles.notEnforced")}
-          </div>
-        </div>
-
-        <div className="hint" style={{ marginBottom: 14 }}>
-          {t("settings.sheet.hint")}
         </div>
 
         <button

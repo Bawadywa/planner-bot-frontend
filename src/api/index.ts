@@ -275,10 +275,11 @@ async function currentWorkspace(): Promise<ID | null> {
  *
  *  The two halves scope themselves differently and neither can do the other's
  *  job, which is why this branches rather than swapping one function for
- *  another. The server filters by workspace AND by board membership, in SQL,
- *  and refuses to answer at all without a workspace. The local store has no
- *  membership table and holds rows that predate the picker, so scopeBoards()
- *  reconciles those against the assignment map.
+ *  another. The server filters by workspace and refuses to answer without one;
+ *  it no longer filters by board membership, so this can return boards the
+ *  caller is not a member of. The local store has no membership table and
+ *  holds rows that predate the picker, so scopeBoards() reconciles those
+ *  against the assignment map.
  *
  *  In local mode an unset workspace still shows every board rather than none,
  *  for the reason it always did: a list that is empty because a choice has not
@@ -339,10 +340,10 @@ export const renameBoard = served.boards ? remote.renameBoard : local.renameBoar
  *  the second call they would sit in localStorage forever, invisible and
  *  pointing at a board id that no longer resolves.
  *
- *  Worth knowing about the server half: the route matches on owner_id and
- *  answers 200 either way, so an invited member deleting a board they do not
- *  own gets a silent no-op that looks exactly like success until the list
- *  reloads unchanged. */
+ *  The server half refuses out loud now rather than no-opping: 404 for a
+ *  board that is gone, 401 for a caller who is not a member of it, 403 when
+ *  their role on it is neither admin nor manager. Those reach the screen as
+ *  the server's own wording. */
 export async function deleteBoard(id: ID): Promise<void> {
   if (!served.boards) return local.deleteBoard(id);
   await remote.deleteBoard(id);
@@ -364,14 +365,37 @@ export const getTask = served.tasks ? remote.getTask : local.getTask;
  *  is N+1 requests, which is fine at the handful of boards one person keeps and
  *  would not be at a hundred - a GET /tasks with no board_id would collapse it.
  *
+ *  allSettled, not all, and that is load-bearing. The two routes disagree about
+ *  who may see what: GET /task_boards stopped checking membership and now lists
+ *  every board in the workspace, while GET /tasks still checks it and 404s for
+ *  a board you were not added to. So the board list routinely contains boards
+ *  whose tasks this identity cannot read - an invitee given one board out of
+ *  three is the ordinary case - and with Promise.all a single one of those
+ *  rejections took the whole screen down: no task counts on Boards, an empty
+ *  Calendar, and an error naming a board nobody asked about.
+ *
+ *  Dropping those boards silently is right here, because the caller is counting
+ *  and laying out tasks rather than opening one board: a board whose tasks
+ *  cannot be read contributes none, which is exactly what it should look like.
+ *  Opening that board still fails loudly, in listTasks(), where it is the
+ *  answer to a question the user actually asked.
+ *
  *  In local mode the same shape reads one store, hence the branch rather than
  *  two implementations. */
 export async function listAllTasks(): Promise<Task[]> {
   const boards: Board[] = await listBoards();
   if (!served.tasks) return local.tasksForBoards(boards.map((b) => b.id));
 
-  const perBoard = await Promise.all(boards.map((b) => remote.listTasks(b.id)));
-  return perBoard.flat();
+  const perBoard = await Promise.allSettled(boards.map((b) => remote.listTasks(b.id)));
+
+  if (DEBUG) {
+    const refused = perBoard.filter((r) => r.status === "rejected").length;
+    if (refused > 0) {
+      console.info(`[planner] ${refused} board(s) listed but their tasks are not readable`);
+    }
+  }
+
+  return perBoard.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
 }
 
 /* --------------------------------------------------------------- comments -- */

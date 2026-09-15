@@ -120,12 +120,7 @@ export function InviteAccept({ token, onDone }: InviteAcceptProps) {
             /* The demo's honest dead end. In local mode invites live in
                localStorage, so a link opened anywhere other than the device
                that made it cannot resolve. */
-            <>
-              <div className="hint">{t("invite.unknownHandoff", { token })}</div>
-              <div className="hint" style={{ marginTop: 10 }}>
-                {t("invite.unknownWhy")}
-              </div>
-            </>
+            <div className="hint">{t("invite.unknownHandoff", { token })}</div>
           )}
           <button className="btn btn-secondary btn-block" style={{ marginTop: 14 }} onClick={onDone}>
             {t("common.close")}

@@ -146,9 +146,8 @@ export interface InvitePreview {
    *
    *  The two empty cases are NOT the same and the screen reads them apart:
    *  `[]` means the invite grants nothing (its boards were deleted), `null`
-   *  means nothing could look. api mode answers null: GET /invite hands back
-   *  the invite ROW, so the boards arrive as ids, and an invitee has no
-   *  membership to resolve an id into a title with. */
+   *  means nothing could look - GET /invite returns board ids, so the titles
+   *  take a second call that is allowed to fail. */
   board_titles: string[] | null;
   /** How many boards the link grants, when only the count is knowable.
    *

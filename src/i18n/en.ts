@@ -82,8 +82,7 @@ export const en = {
   "board.saveFailed": "Could not save that.",
   "board.deleteFailed": "Could not delete the board.",
   "board.hidden.title": "Boards only, for now",
-  "board.hidden.body":
-    "This board is saved on the backend. Tasks are not yet, so they are hidden rather than written somewhere this board cannot see them.",
+  "board.hidden.body": "Tasks are not on the server yet.",
   "board.empty.title": "Nothing here yet",
   "board.empty.body": "Add the first task to this board.",
   "board.markDone": "Mark as done",
@@ -146,8 +145,7 @@ export const en = {
   "settings.removeFailed": "Could not remove them.",
   "settings.loadFailed": "Could not load your workspace.",
   "settings.invite": "Invite someone",
-  "settings.inviteHint":
-    "Create a board first — an invite grants access to specific boards.",
+  "settings.inviteHint": "Create a board first.",
   "settings.inviteLinks": "Invite links",
   "settings.used": "used",
   "settings.shareAgain": "Share this link again",
@@ -155,8 +153,7 @@ export const en = {
   "settings.boardDeleted": "Board deleted",
   "settings.confirmRevoke":
     "Revoke this link? Anyone who already has it will not be able to join.",
-  "settings.fallbackNote":
-    "Telegram’s share sheet is only available inside the Telegram app — the link opened in a browser tab instead. It is listed below, ready to copy.",
+  "settings.fallbackNote": "Opened in a browser tab — the link is listed below.",
   "settings.inviteText": "Join me in {what} on Planner",
   "settings.inviteTextPlain": "Join me on Planner",
   "settings.data": "Data",
@@ -165,8 +162,7 @@ export const en = {
   "settings.notRegistered": "Account not registered",
   "settings.localTag": "local",
   "settings.storedHere": "Stored in this browser",
-  "settings.storedHereApi":
-    "Rows left over from a run in local mode, plus your language choice. Everything the app shows you now comes from the server.",
+  "settings.storedHereApi": "Leftovers from local mode, plus your language.",
   "settings.storedHereLocal":
     "Nothing is sent to a server yet — invites are local only.",
   "settings.erase": "Erase local data",
@@ -178,43 +174,27 @@ export const en = {
   "settings.sheet.boards": "Boards they can open",
   "settings.sheet.role": "Role",
   "settings.sheet.selected": "{count} selected",
-  "settings.sheet.hint":
-    "Telegram opens its own share sheet next — search, recent chats and contacts — and sends the link from you. Nothing leaves this device until you pick someone there.",
   "settings.sheet.submit": "Choose a chat in Telegram",
   "settings.sheet.failed": "Could not create the invite.",
 
   /* ---------------------------------------------------------------- roles -- */
   "roles.admin": "Admin",
-  "roles.adminHint":
-    "Full control, including deleting the workspace and everything in it. Give this only to someone you would trust with the account.",
   "roles.manager": "Manager",
-  "roles.managerHint": "Runs the boards they are given — tasks, deadlines and people.",
   "roles.worker": "Member",
-  "roles.workerHint": "Works on the boards they are given. The safe default for a link sent to a chat.",
-  "roles.notEnforced":
-    "The role is recorded with the membership, but the backend does not check it on any route yet — today every member can do everything.",
 
   /* --------------------------------------------------------------- invite -- */
   "invite.title": "You were invited",
   "invite.checking": "Checking the link…",
-  "invite.unknownHandoff":
-    "This link carries the token {token}, and Telegram delivered it to the app correctly — that is the whole handoff working.",
-  "invite.unknownWhy":
-    "It cannot be redeemed here because invites are still stored in the browser that created them. Once the backend has an /invites table, this is where the board would be joined.",
-  "invite.unknownServed":
-    "This link is no longer valid. It may have been used already, revoked by whoever sent it, or simply expired — ask them for a new one.",
+  "invite.unknownHandoff": "Token {token} arrived correctly.",
+  "invite.unknownServed": "This link is no longer valid.",
   "invite.workspace": "Workspace",
   "invite.boards": "Boards this link opens",
   "invite.boardsDeleted": "Those boards have since been deleted.",
-  "invite.boardCount": {
-    one: "{count} board — its name becomes visible once you join.",
-    other: "{count} boards — their names become visible once you join.",
-  },
-  "invite.noPreview":
-    "Not shown — the server identifies the boards by number, and their names are only readable once you are a member. Joining is what makes them visible.",
+  "invite.boardCount": { one: "{count} board", other: "{count} boards" },
+  "invite.noPreview": "Visible once you join.",
   "invite.alreadyUsed": "This link has already been used.",
-  "invite.expiresAt": "This link works until {when}.",
-  "invite.expired": "This link expired on {when}. Ask whoever sent it for a new one.",
+  "invite.expiresAt": "Valid until {when}.",
+  "invite.expired": "Expired {when}.",
   "invite.join": "Join",
   "invite.joined": "You’re in",
   "invite.joinedBody": "The board is on your Taskboard tab now.",
@@ -297,10 +277,8 @@ export const en = {
 
   /* -------------------------------------------------- why a feature hides -- */
   "missing.taskDone": "Marking a task done needs a `done` column on the Task model.",
-  "missing.comments":
-    "Comments need CommentRead in backend/app/schemas.py to carry id, user_id and created_at.",
-  "missing.workspace":
-    "Listing a workspace needs a route that reads the users sharing a workspace_id — the Workspace model itself already exists.",
+  "missing.comments": "Needs id, user_id and created_at on CommentRead.",
+  "missing.workspace": "Needs a route listing a workspace’s members.",
 
   /* -------------------------------------------------------------- credits -- */
   "powered.by": "Powered by",
