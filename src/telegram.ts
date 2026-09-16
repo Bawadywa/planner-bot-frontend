@@ -297,9 +297,13 @@ export function inviteLink(token: string): string {
  *  From 7.0 on the app stays open underneath. Nothing can be done about it from
  *  here - it is a reason to prefer shareMessage() eventually, not a bug. */
 export function shareToTelegram(url: string, text: string): boolean {
-  const share =
-    `https://t.me/share/url?url=${encodeURIComponent(url)}` +
-    `&text=${encodeURIComponent(text)}`;
+  /* The whole message goes in `text`, with the link on its own last line and
+     `url` left empty on purpose. Given both, the sheet composes them as `url`
+     THEN `text`, which puts a bare link above the sentence that explains it -
+     backwards for a message that lands in a stranger's chat. Telegram finds
+     the link inside the text either way and still builds the preview. */
+  const message = text + "\n" + url;
+  const share = `https://t.me/share/url?url=&text=${encodeURIComponent(message)}`;
 
   if (tg?.openTelegramLink) {
     tg.openTelegramLink(share);

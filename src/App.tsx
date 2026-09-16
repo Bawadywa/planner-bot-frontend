@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import * as api from "./api";
 import { Boards } from "./screens/Boards";
 import { Board } from "./screens/Board";
@@ -8,7 +8,8 @@ import { Settings } from "./screens/Settings";
 import { InviteAccept } from "./screens/InviteAccept";
 import { BoardIcon, CalendarIcon, SettingsIcon } from "./components/Icons";
 import { clearStartParam, haptic, pushBack, startInviteToken } from "./telegram";
-import { useT } from "./i18n";
+import { useNavSlide } from "./lib/navSlide";
+import { useT, type Key } from "./i18n";
 import type { ID, User } from "./types";
 
 type Tab = "boards" | "calendar" | "settings";
@@ -17,6 +18,22 @@ type Tab = "boards" | "calendar" | "settings";
    be a month grid over rows the server has never heard of. See isAvailable() in
    api/index.ts for why a feature is hidden rather than left half-working. */
 const showCalendar = api.isAvailable("tasks");
+
+/* The bar, left to right. A list rather than three hand-written buttons,
+   because the slide gesture reads the tabs back off the DOM (lib/navSlide.ts)
+   and the two have to agree on what is down there: with the calendar hidden the
+   bar is two buttons wide, not three with a hole in it. */
+const TABS: ReadonlyArray<{
+  id: Tab;
+  Icon: ComponentType<{ size?: number }>;
+  label: Key;
+}> = [
+  { id: "boards", Icon: BoardIcon, label: "app.nav.boards" },
+  { id: "calendar", Icon: CalendarIcon, label: "app.nav.calendar" },
+  { id: "settings", Icon: SettingsIcon, label: "app.nav.settings" },
+];
+
+const tabs = TABS.filter((item) => item.id !== "calendar" || showCalendar);
 
 /** Screens pushed on top of the current tab. A plain array is enough here -
  *  the app is three tabs deep at most, and a URL router would fight Telegram's
@@ -63,6 +80,11 @@ export function App() {
     setTab(next);
   }
 
+  /* Hold the bar and slide along it to move between tabs, the way Instagram's
+     does. switchTab() is handed over whole: a tab crossed with the finger down
+     should land exactly where a tap on it would, pushed stack cleared and all. */
+  const slide = useNavSlide<Tab>(switchTab);
+
   if (!user) return <div className="app" />;
 
   const top = stack[stack.length - 1];
@@ -98,30 +120,21 @@ export function App() {
         />
       )}
 
-      <nav className="nav">
-        <button
-          aria-current={tab === "boards" ? "page" : undefined}
-          onClick={() => switchTab("boards")}
-        >
-          <BoardIcon />
-          <span className="label">{t("app.nav.boards")}</span>
-        </button>
-        {showCalendar && (
+      <nav className={slide.sliding ? "nav is-sliding" : "nav"} ref={slide.ref}>
+        {tabs.map(({ id, Icon, label }) => (
           <button
-            aria-current={tab === "calendar" ? "page" : undefined}
-            onClick={() => switchTab("calendar")}
+            key={id}
+            /* What the slide gesture matches an x position against. Kept on the
+               button rather than inferred from the order, so a tab that stops
+               being rendered stops being reachable by the finger too. */
+            data-tab={id}
+            aria-current={tab === id ? "page" : undefined}
+            onClick={() => switchTab(id)}
           >
-            <CalendarIcon />
-            <span className="label">{t("app.nav.calendar")}</span>
+            <Icon />
+            <span className="label">{t(label)}</span>
           </button>
-        )}
-        <button
-          aria-current={tab === "settings" ? "page" : undefined}
-          onClick={() => switchTab("settings")}
-        >
-          <SettingsIcon />
-          <span className="label">{t("app.nav.settings")}</span>
-        </button>
+        ))}
       </nav>
 
       {inviteToken && (

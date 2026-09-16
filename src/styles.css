@@ -419,10 +419,20 @@ select {
 .nav {
   flex: none;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* Columns follow the buttons that are actually there. A fixed repeat(3) left
+     an empty third of the bar on builds with no calendar tab - see TABS in
+     App.tsx, which is now the one place the bar's contents are decided. */
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   background: var(--surface);
   border-top: 1px solid var(--border);
   padding-bottom: var(--inset-bottom);
+  /* The bar owns every touch that starts on it, because a stroke along it is a
+     tab slide (lib/navSlide.ts) rather than a scroll or a double-tap zoom. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .nav button {
@@ -438,6 +448,26 @@ select {
   color: var(--faint);
   cursor: pointer;
   transition: color 0.12s ease;
+  /* Both of these are for the pill below: relative to position it, and a
+     stacking context of its own so the pill's z-index sinks it behind the icon
+     without dropping it behind the bar's own background. */
+  position: relative;
+  z-index: 0;
+}
+
+/* The pill that rides under the finger during a slide. Idle at rest - the bar
+   at rest is still the plain colour-only one, and a permanent pill would be a
+   redesign of it rather than feedback for a gesture. */
+.nav button::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 5px 10px 7px;
+  border-radius: var(--radius);
+  background: var(--accent-weak);
+  opacity: 0;
+  transform: scale(0.86);
+  transition: opacity 0.14s ease, transform 0.14s ease;
 }
 
 .nav button .label {
@@ -452,6 +482,39 @@ select {
 
 .nav button:active {
   background: var(--surface-sunk);
+}
+
+/* Mid-slide the open tab is whichever one the finger is over, so it is the one
+   that has to look pressed. :active is no help here - the browser leaves it on
+   the button the touch STARTED on, which is the tab being left behind. */
+.nav.is-sliding button:active {
+  background: none;
+}
+
+.nav.is-sliding button[aria-current="page"]::before {
+  opacity: 1;
+  transform: none;
+}
+
+.nav.is-sliding button[aria-current="page"] svg {
+  transform: translateY(-1px) scale(1.06);
+}
+
+.nav button svg {
+  transition: transform 0.14s ease;
+}
+
+/* The pill is the feedback, not its travel: it still appears under the finger,
+   it just stops growing into place. */
+@media (prefers-reduced-motion: reduce) {
+  .nav button::before,
+  .nav button svg {
+    transition: none;
+  }
+
+  .nav.is-sliding button[aria-current="page"] svg {
+    transform: none;
+  }
 }
 
 /* --------------------------------------------------------------- sections -- */
