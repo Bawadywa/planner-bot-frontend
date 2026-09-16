@@ -160,7 +160,8 @@ export const uk: Record<Key, Phrase> = {
   "settings.boardDeleted": "Дошку видалено",
   "settings.confirmRevoke":
     "Відкликати це посилання? Той, хто вже його має, не зможе приєднатися.",
-  "settings.fallbackNote": "Відкрито у вкладці браузера — посилання в списку нижче.",
+  "settings.shareNote": "Посилання на запрошення — скопіюйте, якщо вікно вибору чату не відкрилося:",
+  "settings.fallbackNote": "Вікно «Поділитися» тут недоступне — скопіюйте посилання:",
   "settings.inviteText": "Приєднуйтеся до {what} у Planner ✨",
   "settings.inviteTextPlain": "Приєднуйтеся до Planner ✨",
   "settings.data": "Дані",

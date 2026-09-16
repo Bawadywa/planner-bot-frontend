@@ -154,7 +154,8 @@ export const en = {
   "settings.boardDeleted": "Board deleted",
   "settings.confirmRevoke":
     "Revoke this link? Anyone who already has it will not be able to join.",
-  "settings.fallbackNote": "Opened in a browser tab — the link is listed below.",
+  "settings.shareNote": "Invite link — copy it if the share sheet did not open:",
+  "settings.fallbackNote": "Telegram's share sheet is not available here — copy the link:",
   "settings.inviteText": "Join me in {what} on Planner ✨",
   "settings.inviteTextPlain": "Join me on Planner ✨",
   "settings.data": "Data",

@@ -54,9 +54,15 @@ export function Settings({ user, onReset, onWorkspaceCreated }: SettingsProps) {
   const [renamingWorkspace, setRenamingWorkspace] = useState<Workspace | null>(null);
   const [inviting, setInviting] = useState(false);
   const [error, setError] = useState("");
-  // Set when a share could not use Telegram's own sheet, which otherwise looks
-  // exactly like a button that does nothing.
-  const [note, setNote] = useState("");
+  /* The last link this screen minted or re-shared, and whether Telegram's own
+     sheet took it.
+
+     Held and shown either way, not just on the fallback. In api mode the
+     Invite links list below is always empty - there is no GET /invites to fill
+     it - so a link that is only handed to the share sheet is unrecoverable the
+     moment that sheet is dismissed, and a share the client quietly declined
+     leaves the screen looking exactly as it did before the tap. */
+  const [minted, setMinted] = useState<{ link: string; shared: boolean } | null>(null);
   const [health, setHealth] = useState<"checking" | "up" | "down">("checking");
 
   const load = useCallback(async () => {
@@ -167,8 +173,8 @@ export function Settings({ user, onReset, onWorkspaceCreated }: SettingsProps) {
 
   function shareAgain(invite: Invite) {
     haptic();
-    const shared = shareToTelegram(inviteLink(invite.token), inviteText());
-    setNote(shared ? "" : t("settings.fallbackNote"));
+    const link = inviteLink(invite.token);
+    setMinted({ link, shared: shareToTelegram(link, inviteText()) });
   }
 
   async function revoke(invite: Invite) {
@@ -364,6 +370,15 @@ export function Settings({ user, onReset, onWorkspaceCreated }: SettingsProps) {
                 {t("settings.inviteHint")}
               </div>
             )}
+
+            {minted && (
+              <div className="hint" style={{ marginTop: 8, wordBreak: "break-all" }}>
+                {minted.shared ? t("settings.shareNote") : t("settings.fallbackNote")}
+                <div className="row-sub" style={{ wordBreak: "break-all" }}>
+                  {minted.link}
+                </div>
+              </div>
+            )}
           </>
         )}
 
@@ -373,8 +388,6 @@ export function Settings({ user, onReset, onWorkspaceCreated }: SettingsProps) {
               <h2>{t("settings.inviteLinks")}</h2>
               <span className="count">{invites.length}</span>
             </div>
-
-            {note && <div className="hint" style={{ marginBottom: 8 }}>{note}</div>}
 
             <div className="list">
               {invites.map((invite) => (
@@ -512,9 +525,9 @@ export function Settings({ user, onReset, onWorkspaceCreated }: SettingsProps) {
           boards={boards}
           inviteText={inviteText}
           onClose={() => setInviting(false)}
-          onInvited={async (sharedNatively) => {
+          onInvited={async (sharedNatively, invite) => {
             setInviting(false);
-            setNote(sharedNatively ? "" : t("settings.fallbackNote"));
+            setMinted({ link: inviteLink(invite.token), shared: sharedNatively });
             await load();
           }}
         />
@@ -590,7 +603,7 @@ function InviteSheet({
   boards: Board[];
   inviteText: () => string;
   onClose: () => void;
-  onInvited: (sharedNatively: boolean) => void | Promise<void>;
+  onInvited: (sharedNatively: boolean, invite: Invite) => void | Promise<void>;
 }) {
   const t = useT();
   const [picked, setPicked] = useState<ID[]>([]);
@@ -604,7 +617,8 @@ function InviteSheet({
 
   /* Mint the token first, then hand the link to Telegram. The sheet closes
      either way: on a real client the share sheet is already on top of it, and
-     in a browser the link is waiting in the Invite links list. */
+     the caller shows the link underneath regardless - which is the only copy
+     of it while there is no GET /invites to list it back. */
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (busy) return;
@@ -615,7 +629,7 @@ function InviteSheet({
       const invite = await api.createInvite(picked, role);
       const shared = shareToTelegram(inviteLink(invite.token), inviteText());
       haptic("medium");
-      await onInvited(shared);
+      await onInvited(shared, invite);
     } catch (err) {
       hapticError();
       setError(err instanceof Error ? err.message : t("settings.sheet.failed"));

@@ -297,13 +297,25 @@ export function inviteLink(token: string): string {
  *  From 7.0 on the app stays open underneath. Nothing can be done about it from
  *  here - it is a reason to prefer shareMessage() eventually, not a bug. */
 export function shareToTelegram(url: string, text: string): boolean {
-  /* The whole message goes in `text`, with the link on its own last line and
-     `url` left empty on purpose. Given both, the sheet composes them as `url`
-     THEN `text`, which puts a bare link above the sentence that explains it -
-     backwards for a message that lands in a stranger's chat. Telegram finds
-     the link inside the text either way and still builds the preview. */
-  const message = text + "\n" + url;
-  const share = `https://t.me/share/url?url=&text=${encodeURIComponent(message)}`;
+  /* `url` carries the link and MUST NOT be empty. The client parses this deep
+     link itself, and the clients disagree about a blank `url=`: iOS and
+     Android compose the message out of `text` alone and open the sheet, while
+     Desktop's ShareUrl() bails on an empty url and the whole deep link is then
+     simply unhandled.
+
+     That is what the previous shape here cost. It folded the link into `text`
+     and left `url=` bare, so Invite worked on a phone and did NOTHING on
+     Desktop: openTelegramLink() was called, the client dropped the link on the
+     floor, no sheet, no error, no way to tell from in here that it happened.
+
+     What that shape was buying is the ordering: given both, the sheet composes
+     the message as `url` THEN `text`, so the link sits above the sentence
+     explaining it. Backwards, and worth it - a sheet that opens with its two
+     lines the wrong way round beats one that never opens. shareMessage() with
+     a prepared_message_id is what actually fixes the ordering. */
+  const share =
+    `https://t.me/share/url?url=${encodeURIComponent(url)}` +
+    `&text=${encodeURIComponent(text)}`;
 
   if (tg?.openTelegramLink) {
     tg.openTelegramLink(share);
